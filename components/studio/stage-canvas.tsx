@@ -9,9 +9,7 @@ import { useFrame, useStudio } from './studio-provider'
 
 const GUTTER = 56
 const TOP = 30
-const BOTTOM_BASE = 16
-/** 가사 줄 높이 (가사가 있을 때 피아노 롤 아래에 붙는다) */
-const LYRIC_LANE = 46
+const BOTTOM = 16
 const HEAD_RATIO = 0.27
 const SNAP = 50
 
@@ -54,8 +52,6 @@ export function StageCanvas() {
     if (!v.mono) v.mono = monoFamily(canvas)
     const mono = v.mono
     const t = live.time
-    const lyr = live.lyrics && live.lyrics.lines.some((l) => l.text || l.reading) ? live.lyrics : null
-    const BOTTOM = BOTTOM_BASE + (lyr ? LYRIC_LANE : 0)
     const shift = live.shift
     const notes = live.notes
     const user = live.userRange
@@ -325,77 +321,6 @@ export function StageCanvas() {
     flush()
 
     ctx.restore()
-
-    /* 가사 줄 — 원문(작게)과 독음(굵게)을 시간 위치에 맞춰 함께 보여준다 */
-    if (lyr) {
-      const top = h - BOTTOM + 8
-      const laneH = LYRIC_LANE - 8
-      ctx.fillStyle = 'oklch(0.2 0.01 250 / 0.9)'
-      ctx.fillRect(GUTTER, top, w - GUTTER, laneH)
-      ctx.fillStyle = PAL.textFaint
-      ctx.font = `600 10px ${SANS}`
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText('가사', GUTTER / 2, top + laneH / 2)
-      const L = lyr.lines
-      const off = lyr.offset
-      const tL = t - (headX - GUTTER) / pxs
-      const tR = t + (w - headX) / pxs
-      ctx.save()
-      ctx.beginPath()
-      ctx.rect(GUTTER, top, w - GUTTER, laneH)
-      ctx.clip()
-      for (let i = 0; i < L.length; i++) {
-        const l = L[i]
-        if (!l.text && !l.reading) continue
-        const a0 = l.t + off
-        const a1 = (i + 1 < L.length ? L[i + 1].t : l.t + 6) + off
-        if (a1 < tL || a0 > tR) continue
-        const x0 = x(a0) + 1
-        const x1 = x(a1) - 2
-        const bw = Math.max(4, x1 - x0)
-        const now = t >= a0 && t < a1
-        ctx.fillStyle = now ? 'oklch(0.75 0.15 165 / 0.22)' : 'oklch(0.32 0.01 250 / 0.85)'
-        ctx.beginPath()
-        ctx.roundRect(x0, top + 3, bw, laneH - 6, 5)
-        ctx.fill()
-        if (now) {
-          ctx.strokeStyle = 'oklch(0.75 0.15 165 / 0.9)'
-          ctx.lineWidth = 1
-          ctx.stroke()
-        }
-        // 줄 시작 표시
-        ctx.fillStyle = now ? 'oklch(0.75 0.15 165)' : PAL.textFaint
-        ctx.fillRect(x0, top + 3, 2, laneH - 6)
-        // 글자: 블록 안에서만 (넘치면 잘림), 왼쪽이 화면 밖이면 보이는 곳부터
-        ctx.save()
-        ctx.beginPath()
-        ctx.rect(x0 + 4, top, bw - 6, laneH)
-        ctx.clip()
-        const tx = Math.max(x0 + 6, GUTTER + 6)
-        ctx.textAlign = 'left'
-        if (l.reading && l.text) {
-          ctx.font = `500 10px ${SANS}`
-          ctx.fillStyle = PAL.textDim
-          ctx.fillText(l.text, tx, top + 12)
-          ctx.font = `700 12px ${SANS}`
-          ctx.fillStyle = now ? PAL.text : 'oklch(0.9 0.01 250)'
-          ctx.fillText(l.reading, tx, top + laneH - 11)
-        } else {
-          ctx.font = `700 12px ${SANS}`
-          ctx.fillStyle = now ? PAL.text : 'oklch(0.9 0.01 250)'
-          ctx.fillText(l.reading || l.text, tx, top + laneH / 2)
-          if (!l.reading) {
-            const w0 = ctx.measureText(l.text).width
-            ctx.font = `500 10px ${SANS}`
-            ctx.fillStyle = PAL.caution ?? PAL.textFaint
-            ctx.fillText('독음 없음', tx + w0 + 8, top + laneH / 2)
-          }
-        }
-        ctx.restore()
-      }
-      ctx.restore()
-    }
 
     /* 재생 헤드 */
     ctx.fillStyle = 'oklch(0.955 0.012 240 / 0.55)'
