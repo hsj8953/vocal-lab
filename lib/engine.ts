@@ -632,6 +632,10 @@ export interface NoteResult {
   ok: number
   off: number
   meanCents: number
+  /** 원곡 키 기준 음 (습관 분석에서 원곡 음정 곡선과 비교할 때) */
+  orig: number
+  /** [노트 시작부터의 시간(초), 센트 차이] — 습관 분석용 */
+  samples: [number, number][]
 }
 
 export interface SessionStats {
@@ -682,12 +686,13 @@ export function createRecorder(): Recorder {
       if (cmp.octaveOff !== 0) acc.oct++
       let nr = acc.notes.get(note.id)
       if (!nr) {
-        nr = { id: note.id, start: note.start, dur: note.dur, midi: shownMidi, lyric: note.lyric, great: 0, ok: 0, off: 0, meanCents: 0, sum: 0, n: 0 }
+        nr = { id: note.id, start: note.start, dur: note.dur, midi: shownMidi, lyric: note.lyric, great: 0, ok: 0, off: 0, meanCents: 0, orig: note.midi, samples: [], sum: 0, n: 0 }
         acc.notes.set(note.id, nr)
       }
       nr[cmp.tier]++
       nr.sum += cmp.cents
       nr.n++
+      if (cmp.octaveOff === 0 && nr.samples.length < 2000) nr.samples.push([t - note.start, cmp.cents])
       const bk = Math.floor(t / 2)
       let b = acc.buckets.get(bk)
       if (!b) {
@@ -1309,6 +1314,8 @@ export const realSaveEdits = (notes: Note[]) => real.saveEdits(notes)
 export const realDiscardEdits = () => real.discardEdits()
 /** 디버깅용: 현재 곡의 내부 상태 */
 export const realSong = () => real.SONG
+/** 원곡 보컬의 음 높이(원곡 키, MIDI) — 없으면 NaN */
+export const realOrigPitchAt = (t: number): number => real.origPitchAt(t)
 export const realLevelInfo = (): { orig: number; mr: number } | null => real.levelInfo()
 
 /** 재생에 쓰는 오디오 컨텍스트 (하나를 같이 쓴다) */

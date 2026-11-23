@@ -1,6 +1,9 @@
 'use client'
 
-import { ArrowLeft, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Lightbulb, RotateCcw } from 'lucide-react'
+import { useMemo } from 'react'
+import * as engine from '@/lib/engine'
+import { analyzeHabits, type Habit } from '@/lib/habits'
 import { Button } from '@/components/ui/button'
 import { fmtTime, noteName } from '@/lib/music'
 import { RangeCompare } from './range-compare'
@@ -91,6 +94,8 @@ export function ResultView() {
             )}
           </section>
 
+          <HabitSection />
+
           <section className="rounded-2xl border border-border bg-card p-5 lg:col-span-2">
             <h2 className="text-sm font-semibold">구간별 정확도</h2>
             <div className="mt-4 flex h-20 items-end gap-0.5" role="img" aria-label="2초 단위 구간별 정확도">
@@ -119,7 +124,7 @@ export function ResultView() {
                   <li key={n.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
                     <span className="flex items-baseline gap-3">
                       <span className="font-mono text-xs text-muted-foreground tabular">{fmtTime(n.start, 1)}</span>
-                      <span className="font-mono font-semibold">{noteName(n.midi + d.shift, s.notation)}</span>
+                      <span className="font-mono font-semibold">{noteName(n.midi, s.notation)}</span>
                       {n.lyric ? <span className="text-muted-foreground">‘{n.lyric}’</span> : null}
                     </span>
                     <span className="flex items-center gap-3">
@@ -162,5 +167,78 @@ function Fact({ label, value }: { label: string; value: string }) {
       <dt className="text-[11px] text-muted-foreground">{label}</dt>
       <dd className="font-mono text-base font-semibold tabular">{value}</dd>
     </div>
+  )
+}
+
+const CONF_LABEL: Record<Habit['confidence'], { text: string; cls: string; title: string }> = {
+  high: { text: '믿을 만해요', cls: 'bg-voice/15 text-voice', title: '여러 노트의 평균이라 순간 오류에 잘 흔들리지 않아요' },
+  mid: { text: '대체로 맞아요', cls: 'bg-caution/15 text-caution', title: '창법(꺾기, 바이브레이션)과 헷갈릴 수 있어요. 예시를 들어 보고 판단해 주세요' },
+  low: { text: '참고용', cls: 'bg-muted text-muted-foreground', title: '싱크나 마이크 지연에 영향을 받아요. 탭으로 싱크를 맞춘 뒤 다시 확인해 보세요' },
+}
+
+function HabitSection() {
+  const { s, a } = useStudio()
+  const ss = s.session
+  const report = useMemo(
+    () => analyzeHabits(ss, s.notes, s.project.real ? engine.realOrigPitchAt : undefined),
+    // 연습 기록이 바뀔 때만 다시 계산
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ss.total, s.notes, s.project.real],
+  )
+  const top = report.habits.slice(0, 3)
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5 lg:col-span-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold">
+          <Lightbulb className="size-4 text-caution" /> 이번 연습에서 고칠 점
+        </h2>
+        <span className="text-[11px] text-muted-foreground">
+          노트 {report.notesUsed}개 분석{report.comparedWithOriginal ? ' · 원곡 가수의 창법은 빼고 판단' : ''}
+        </span>
+      </div>
+      {report.notesUsed < 8 ? (
+        <p className="mt-3 text-sm text-muted-foreground">습관을 찾기엔 기록이 아직 적어요. 한 소절 이상 길게 불러 주세요.</p>
+      ) : top.length === 0 ? (
+        <p className="mt-3 text-sm text-muted-foreground">반복되는 습관이 뚜렷하게 보이지 않아요. 지금처럼 부르면 돼요!</p>
+      ) : (
+        <ol className="mt-4 grid gap-3 md:grid-cols-3">
+          {top.map((h, i) => {
+            const c = CONF_LABEL[h.confidence]
+            return (
+              <li key={h.id} className="flex flex-col rounded-xl border border-border bg-background/40 p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-mono text-xs text-muted-foreground">{i + 1}</span>
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${c.cls}`} title={c.title}>
+                    {c.text}
+                  </span>
+                </div>
+                <h3 className="mt-1 text-[15px] leading-snug font-bold">{h.title}</h3>
+                <p className="mt-1 font-mono text-xs text-voice tabular">{h.stat}</p>
+                <p className="mt-2 flex-1 text-xs leading-relaxed text-muted-foreground">{h.tip}</p>
+                {h.examples.length ? (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {h.examples.map((e) => (
+                      <Button
+                        key={e.id}
+                        size="xs"
+                        variant="secondary"
+                        title="그 노트 2초 전부터 들어 보기"
+                        onClick={() => {
+                          a.setView('studio')
+                          a.seek(Math.max(0, e.start - 2))
+                        }}
+                      >
+                        {fmtTime(e.start)} {noteName(e.midi, s.notation)}
+                        {e.lyric ? ` ‘${e.lyric}’` : ''}
+                      </Button>
+                    ))}
+                  </div>
+                ) : null}
+              </li>
+            )
+          })}
+        </ol>
+      )}
+    </section>
   )
 }
