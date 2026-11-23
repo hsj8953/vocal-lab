@@ -6,7 +6,7 @@ export type View = 'import' | 'studio' | 'result'
 export type RailTab = 'key' | 'analysis' | 'edit'
 export type Tool = 'select' | 'add' | 'cut'
 export type Source = 'mr' | 'original'
-export type InputKind = 'original' | 'mr' | 'vocal' | 'noteFile'
+export type InputKind = 'original' | 'mr' | 'vocal' | 'noteFile' | 'lyrics'
 
 export interface InputFile {
   name: string
@@ -40,6 +40,23 @@ export interface AnalysisState {
   /** 보컬 파일이 없을 때 AI로 보컬·반주 분리 */
   separate: boolean
   info: RealInfo | null
+}
+
+export interface LyricWord {
+  t: number
+  text: string
+}
+export interface LyricLine {
+  t: number
+  text: string
+  /** 단어별 시간 (확장 LRC <mm:ss.xx>) */
+  words?: LyricWord[]
+}
+export interface Lyrics {
+  name: string
+  lines: LyricLine[]
+  /** 표시 시간 보정(초). +면 가사가 늦게 나온다 */
+  offset: number
 }
 
 export interface MeasureState {
@@ -76,6 +93,12 @@ export interface StudioState {
   volume: number
   muted: boolean
   syncMs: number
+  /** MR에 섞어 들을 가이드 보컬 볼륨 0~1 */
+  guideVolume: number
+  /** 가이드 보컬(분리 보컬 또는 보컬 파일)이 있는지 */
+  guideAvailable: boolean
+  /** 가사 (.lrc) */
+  lyrics: Lyrics | null
   /** 마이크 입력 지연(ms) — 내 목소리 선을 이만큼 앞으로 당긴다 */
   micLatencyMs: number
   bufferStatus: 'loading' | 'ready'
@@ -166,6 +189,9 @@ export function createInitialState(): StudioState {
     muted: false,
     syncMs: 0,
     micLatencyMs: 60,
+    guideVolume: 0,
+    guideAvailable: false,
+    lyrics: null,
     bufferStatus: 'loading',
     bufferMsg: null,
     outputLatencyMs: 0,

@@ -69,19 +69,38 @@ export function Transport() {
           <Button type="button" variant="ghost" size="icon-sm" onClick={a.toggleMute} aria-label={s.muted ? '음소거 해제' : '음소거'}>
             {s.muted || s.volume === 0 ? <VolumeX /> : <Volume2 />}
           </Button>
-          <Slider
-            aria-label="볼륨"
-            className="w-24"
-            min={0}
-            max={100}
-            value={[s.muted ? 0 : Math.round(s.volume * 100)]}
-            onValueChange={(v) => {
-              const n = Array.isArray(v) ? v[0] : v
-              if (s.muted) a.toggleMute()
-              a.setVolume(n / 100)
-            }}
-          />
+          <div className="w-24 shrink-0">
+            <Slider
+              aria-label="볼륨"
+              className="w-full"
+              min={0}
+              max={100}
+              value={[s.muted ? 0 : Math.round(s.volume * 100)]}
+              onValueChange={(v) => {
+                const n = Array.isArray(v) ? v[0] : v
+                if (s.muted) a.toggleMute()
+                a.setVolume(n / 100)
+              }}
+            />
+          </div>
         </div>
+
+        {s.source === 'mr' && s.guideAvailable ? (
+          <div className="flex items-center gap-2" title="반주에 원곡 보컬을 섞어서 들어요. 익숙해지면 줄여 보세요.">
+            <span className="text-xs whitespace-nowrap text-muted-foreground">가이드 보컬</span>
+            <div className="w-24 shrink-0">
+              <Slider
+                aria-label="가이드 보컬 볼륨"
+                className="w-full"
+                min={0}
+                max={100}
+                value={[Math.round(s.guideVolume * 100)]}
+                onValueChange={(v) => a.setGuideVolume((Array.isArray(v) ? v[0] : v) / 100)}
+              />
+            </div>
+            <span className="w-9 font-mono text-[11px] whitespace-nowrap text-muted-foreground tabular">{Math.round(s.guideVolume * 100)}%</span>
+          </div>
+        ) : null}
 
         <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
           {loading ? <span role="status">{s.bufferMsg ?? '음원 준비 중…'}</span> : null}

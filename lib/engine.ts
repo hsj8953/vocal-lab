@@ -901,6 +901,12 @@ export interface Player {
   onEnded: (cb: () => void) => void
   /** 출력 장치 지연(ms) */
   outputLatencyMs: () => number
+  /** 반주와 함께 재생할 가이드 보컬 (같은 시간축). null이면 끔 */
+  loadGuide: (buf: AudioBuffer | null) => void
+  /** 가이드 보컬 볼륨 0~1 */
+  setGuideVolume: (v: number) => void
+  /** 오디오 컨텍스트 (싱크 측정용) */
+  audioContext: () => AudioContext
   dispose: () => void
 }
 
@@ -915,6 +921,10 @@ export function createPlayer(): Player {
   let token = 0
   let volume = 0.8
   let endedCb: (() => void) | null = null
+  let guideBuf: AudioBuffer | null = null
+  let guideSrc: AudioBufferSourceNode | null = null
+  let guideGain: GainNode | null = null
+  let guideVol = 0
 
   const ensure = () => {
     if (!ctx) {
@@ -930,8 +940,31 @@ export function createPlayer(): Player {
       lim.release.value = 0.1
       gain.connect(lim)
       lim.connect(ctx.destination)
+      guideGain = ctx.createGain()
+      guideGain.gain.value = guideVol * guideVol
+      guideGain.connect(gain)
     }
     return ctx
+  }
+  const stopGuide = () => {
+    if (guideSrc) {
+      try {
+        guideSrc.stop()
+      } catch {
+        /* already stopped */
+      }
+      guideSrc.disconnect()
+      guideSrc = null
+    }
+  }
+  const startGuide = (when: number, at: number) => {
+    stopGuide()
+    if (!guideBuf || !ctx || !guideGain || at >= guideBuf.duration) return
+    const g = ctx.createBufferSource()
+    g.buffer = guideBuf
+    g.connect(guideGain)
+    g.start(when, at)
+    guideSrc = g
   }
   const rawPos = () => (playing && ctx ? offset + (ctx.currentTime - startedAt) : offset)
   const stopSrc = () => {
@@ -945,6 +978,7 @@ export function createPlayer(): Player {
       src.disconnect()
       src = null
     }
+    stopGuide()
   }
   const startSrc = () => {
     if (!buffer) return
@@ -962,9 +996,12 @@ export function createPlayer(): Player {
       src = null
       endedCb?.()
     }
-    s.start(0, offset)
+    // 반주와 가이드 보컬이 같은 순간에 시작하도록 아주 약간 뒤로 예약한다
+    const when = c.currentTime + 0.03
+    s.start(when, offset)
+    startGuide(when, offset)
     src = s
-    startedAt = c.currentTime
+    startedAt = when
     playing = true
   }
 
@@ -1009,6 +1046,16 @@ export function createPlayer(): Player {
     onEnded(cb) {
       endedCb = cb
     },
+    loadGuide(buf) {
+      guideBuf = buf
+      if (playing && ctx) startGuide(ctx.currentTime + 0.02, rawPos() + 0.02)
+      else if (!buf) stopGuide()
+    },
+    setGuideVolume(v) {
+      guideVol = v
+      if (guideGain) guideGain.gain.value = v * v
+    },
+    audioContext: () => ensure(),
     outputLatencyMs() {
       const c = ensure()
       return Math.round(((c.outputLatency || 0) + (c.baseLatency || 0)) * 1000)
@@ -1264,6 +1311,10 @@ export const realDiscardEdits = () => real.discardEdits()
 export const realSong = () => real.SONG
 export const realLevelInfo = (): { orig: number; mr: number } | null => real.levelInfo()
 
-export async function realTrackBuffer(track: 'mr' | 'original', semitones: number, onProg?: (p: number, eta: string) => void): Promise<AudioBuffer | null> {
+/** 재생에 쓰는 오디오 컨텍스트 (하나를 같이 쓴다) */
+export const audioContext = (): AudioContext => real.audioCtx()
+export const realHasGuideVocal = (): boolean => real.hasGuideVocal()
+
+export async function realTrackBuffer(track: 'mr' | 'original' | 'vocal', semitones: number, onProg?: (p: number, eta: string) => void): Promise<AudioBuffer | null> {
   return real.getTrackBuffer(track, semitones, onProg)
 }

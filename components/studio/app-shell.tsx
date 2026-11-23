@@ -7,6 +7,7 @@ import { Slider } from '@/components/ui/slider'
 import { cn } from '@/lib/utils'
 import { ImportView } from './import-view'
 import { LiveHud } from './live-hud'
+import { LyricsOverlay } from './lyrics-overlay'
 import { RailAnalysis } from './rail-analysis'
 import { RailEdit } from './rail-edit'
 import { RailKey } from './rail-key'
@@ -16,6 +17,7 @@ import { useStudio } from './studio-provider'
 import type { RailTab, View } from './studio-types'
 import { Transport } from './transport'
 import { Seg } from './ui-bits'
+import { SyncCalibrate } from './sync-calibrate'
 
 const NAV: { view: View; label: string; icon: typeof FolderOpen }[] = [
   { view: 'import', label: '곡 불러오기', icon: FolderOpen },
@@ -91,6 +93,7 @@ function Header() {
 function SyncControl() {
   const { s, a } = useStudio()
   const [open, setOpen] = useState(false)
+  const [calib, setCalib] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
@@ -121,6 +124,13 @@ function SyncControl() {
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             노트가 노래보다 <b className="text-foreground">늦게</b> 지나가면 <b className="text-foreground">+</b>, <b className="text-foreground">먼저</b> 지나가면 <b className="text-foreground">−</b>로 맞춰 주세요. 블루투스 이어폰은 보통 +150~300ms가 필요해요.
           </p>
+          {calib ? (
+            <SyncCalibrate onClose={() => setCalib(false)} />
+          ) : (
+            <Button variant="secondary" size="sm" className="mt-3 w-full" onClick={() => setCalib(true)}>
+              탭으로 자동 맞추기
+            </Button>
+          )}
           <Slider className="mt-4" aria-label="싱크 보정(ms)" min={-800} max={800} step={5} value={[s.syncMs]} onValueChange={(v) => a.setSyncMs(Array.isArray(v) ? v[0] : v)} />
           <div className="mt-3 grid grid-cols-5 gap-1.5">
             {[-50, -10, 0, 10, 50].map((n) => (
@@ -166,6 +176,7 @@ function StudioView() {
         <div className="relative h-[52dvh] min-h-[320px] lg:h-auto lg:flex-1">
           <StageCanvas />
           <LiveHud />
+          <LyricsOverlay />
           <MeasureBanner />
         </div>
         <Transport />

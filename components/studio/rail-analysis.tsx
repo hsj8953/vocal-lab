@@ -1,6 +1,7 @@
 'use client'
 
-import { AlertTriangle, Loader2, PencilLine, RefreshCw, Wand2 } from 'lucide-react'
+import { AlertTriangle, FileText, Loader2, PencilLine, RefreshCw, Wand2, X } from 'lucide-react'
+import { useRef } from 'react'
 import { METHOD_LABEL } from '@/lib/engine'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
@@ -143,6 +144,8 @@ export function RailAnalysis() {
       </Section>
 
       {an.info?.fileInfo ? <NoteFileSection /> : null}
+
+      <LyricsSection />
 
       <Section title="MR 시간 정렬">
         {s.inputs.mr ? (
@@ -308,6 +311,55 @@ function NoteFileSection() {
           자동
         </Button>
       </div>
+    </Section>
+  )
+}
+
+function LyricsSection() {
+  const { s, a } = useStudio()
+  const input = useRef<HTMLInputElement>(null)
+  const ly = s.lyrics
+  return (
+    <Section title="가사" hint={ly ? ly.name : '.lrc 파일'}>
+      <input ref={input} type="file" accept=".lrc,.txt,text/plain" className="sr-only" aria-label="가사 파일 선택" onChange={(e) => e.target.files?.[0] && a.setInput('lyrics', e.target.files[0])} />
+      {ly ? (
+        <>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">
+              {ly.lines.filter((l) => l.text).length}줄{ly.lines.some((l) => l.words?.length) ? ' · 단어별 강조' : ''}
+            </span>
+            <Button variant="ghost" size="xs" onClick={() => a.setInput('lyrics', null)}>
+              <X /> 빼기
+            </Button>
+          </div>
+          <div className="mt-2 flex items-center justify-between text-xs">
+            <span className="font-medium">가사 타이밍</span>
+            <span className="font-mono tabular text-muted-foreground">
+              {ly.offset > 0 ? '+' : ly.offset < 0 ? '−' : '±'}
+              {Math.abs(ly.offset).toFixed(1)}s
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">가사가 노래보다 빨리 나오면 +, 늦게 나오면 −로 옮겨요.</p>
+          <div className="mt-2 grid grid-cols-5 gap-1.5">
+            {[-0.5, -0.1, 0.1, 0.5].map((d) => (
+              <Button key={d} variant="outline" size="xs" onClick={() => a.setLyricsOffset(ly.offset + d)}>
+                {d > 0 ? '+' : '−'}
+                {Math.abs(d)}
+              </Button>
+            ))}
+            <Button variant="ghost" size="xs" onClick={() => a.setLyricsOffset(0)}>
+              0
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-xs leading-relaxed text-muted-foreground">시간이 붙은 가사 파일(.lrc)을 넣으면 피아노 롤 아래에 지금 부를 줄과 다음 줄이 떠요. 단어별 시간이 있는 확장 LRC면 단어마다 색이 바뀌어요.</p>
+          <Button className="mt-3 w-full" variant="outline" onClick={() => input.current?.click()}>
+            <FileText /> 가사 파일 넣기
+          </Button>
+        </>
+      )}
     </Section>
   )
 }

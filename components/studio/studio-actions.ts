@@ -2,6 +2,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import * as engine from '@/lib/engine'
 import type { AnalysisOptions, CrepeModel, Note, OctaveMode, PitchFrame, PitchModel, Player, Recorder } from '@/lib/engine'
 import { clamp } from '@/lib/music'
+import { parseLrc } from '@/lib/lrc'
 import type { Notation } from '@/lib/music'
 import {
   DEMO_ABILITY,
@@ -282,6 +283,7 @@ export function createActions(env: ActionEnv) {
           },
           align: { status: al ? 'done' : 'idle', result: al ? { offsetMs: Math.round(al.offset * 1000), confidence: al.conf } : null },
           level: engine.realLevelInfo(),
+          guideAvailable: engine.realHasGuideVocal(),
           source: inputs.mr || res.info.separated ? (isNew ? 'mr' : p.source) : 'original',
           view: goStudio ? 'studio' : p.view,
           railTab: goStudio ? 'analysis' : p.railTab,
@@ -355,6 +357,23 @@ export function createActions(env: ActionEnv) {
     if (r) set({ align: { status: 'done', result: r } })
   }
 
+  /* 가사 (.lrc) */
+  const loadLyrics = async (file: File) => {
+    try {
+      const lines = parseLrc(await file.text())
+      if (!lines.length) throw new Error('시간 정보([mm:ss.xx])가 있는 LRC 가사가 아니에요.')
+      set({ lyrics: { name: file.name, lines, offset: 0 } })
+      notify(`가사 ${lines.filter((l) => l.text).length}줄을 불러왔어요.`)
+    } catch (e) {
+      set((p) => {
+        const inputs = { ...p.inputs }
+        delete inputs.lyrics
+        return { inputs, lyrics: null }
+      })
+      notify(e instanceof Error ? e.message : '가사 파일을 읽지 못했어요.')
+    }
+  }
+
   /* 직접 편집한 노트는 원곡 파일별로 자동 저장 */
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   const scheduleSave = () => {
@@ -393,13 +412,16 @@ export function createActions(env: ActionEnv) {
     setTool: (tool: Tool) => set({ tool }),
 
     /* 입력 파일 */
-    setInput: (kind: InputKind, file: File | null) =>
+    setInput: (kind: InputKind, file: File | null) => {
       set((p) => {
         const inputs = { ...p.inputs }
         if (file) inputs[kind] = { name: file.name, size: file.size, file }
         else delete inputs[kind]
-        return { inputs }
-      }),
+        return { inputs, ...(kind === 'lyrics' && !file ? { lyrics: null } : {}) }
+      })
+      if (kind === 'lyrics' && file) void loadLyrics(file)
+    },
+    setLyricsOffset: (sec: number) => set((p) => (p.lyrics ? { lyrics: { ...p.lyrics, offset: Math.round(sec * 100) / 100 } } : {})),
     setSensitivity: (v: number) => set((p) => ({ analysis: { ...p.analysis, sensitivity: v } })),
     setSplit: (v: boolean) => set((p) => ({ analysis: { ...p.analysis, splitSyllables: v } })),
     analyze,
@@ -451,6 +473,10 @@ export function createActions(env: ActionEnv) {
     },
     setSyncMs: (ms: number) => set({ syncMs: clamp(Math.round(ms), -800, 800) }),
     setMicLatency: (ms: number) => set({ micLatencyMs: clamp(Math.round(ms), 0, 300) }),
+    setGuideVolume: (v: number) => {
+      playerRef.current?.setGuideVolume(clamp(v, 0, 1))
+      set({ guideVolume: clamp(v, 0, 1) })
+    },
 
     /* 키 · 음역 */
     setKey: (keyShift: number) => set({ keyShift: clamp(keyShift, -7, 7) }),

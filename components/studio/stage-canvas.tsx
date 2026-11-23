@@ -219,10 +219,15 @@ export function StageCanvas() {
         const lw = ctx.measureText(label).width
         const inside = !n.lyric && nw >= lw + 10 && noteH >= 14
         const lx = inside ? x1 + nw / 2 - lw / 2 : x1
-        const ly = inside ? yc + 0.5 : yc - noteH / 2 - 7
-        const prevLab = labelRow.get(Math.round(ly))
-        // 같은 줄에서 앞 글자와 겹치고 같은 음이면 생략 (짧은 노트가 이어질 때 글자가 뭉개지지 않게)
-        if (!(prevLab && lx < prevLab.right + 2 && prevLab.text === label)) {
+        let ly = inside ? yc + 0.5 : yc - noteH / 2 - 7
+        let prevLab = labelRow.get(Math.round(ly))
+        // 위에 쓰는 글자가 앞 글자와 겹치면 한 칸 더 위로 올린다 (다른 음인데 노트가 짧게 붙어 있을 때)
+        if (!inside && prevLab && lx < prevLab.right + 3 && prevLab.text !== label) {
+          ly -= 12
+          prevLab = labelRow.get(Math.round(ly))
+        }
+        // 같은 줄에서 앞 글자와 겹치면 생략 (같은 음이 이어질 때 글자가 뭉개지지 않게)
+        if (!(prevLab && lx < prevLab.right + 3)) {
           ctx.textAlign = 'left'
           ctx.fillStyle = inside ? (isPast && !sc ? PAL.textDim : PAL.ink) : isNow ? PAL.text : outside ? PAL.miss : isPast ? PAL.textFaint : PAL.textDim
           ctx.fillText(label, lx, ly)

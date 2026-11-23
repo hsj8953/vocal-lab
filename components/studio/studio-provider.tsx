@@ -190,6 +190,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           micLatencyMs: v.micLatencyMs ?? p.micLatencyMs,
           notation: v.notation ?? p.notation,
           volume: v.volume ?? p.volume,
+          guideVolume: v.guideVolume ?? p.guideVolume,
           analysis: { ...p.analysis, ...(v.analysis ?? {}) },
         }))
     } catch {
@@ -206,13 +207,35 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           micLatencyMs: s.micLatencyMs,
           notation: s.notation,
           volume: s.volume,
+          guideVolume: s.guideVolume,
           analysis: { sensitivity: s.analysis.sensitivity, splitSyllables: s.analysis.splitSyllables, autofill: s.analysis.autofill, pitchModel: s.analysis.pitchModel, crepeModel: s.analysis.crepeModel, separate: s.analysis.separate },
         }),
       )
     } catch {
       /* 무시 */
     }
-  }, [s.userRange, s.syncMs, s.micLatencyMs, s.notation, s.volume, s.analysis.sensitivity, s.analysis.splitSyllables, s.analysis.autofill, s.analysis.pitchModel, s.analysis.crepeModel, s.analysis.separate])
+  }, [s.guideVolume, s.userRange, s.syncMs, s.micLatencyMs, s.notation, s.volume, s.analysis.sensitivity, s.analysis.splitSyllables, s.analysis.autofill, s.analysis.pitchModel, s.analysis.crepeModel, s.analysis.separate])
+
+  /* 가이드 보컬: MR 재생 중이고 볼륨이 0보다 클 때만 만든다 */
+  const guideOn = isReal && s.source === 'mr' && s.guideAvailable && s.guideVolume > 0
+  const guideKey = guideOn ? `${songKey}|guide|${s.keyShift}|${s.analysis.info?.vocOffset ?? 0}|${s.analysis.info?.method}|${s.inputs.vocal?.name ?? (s.analysis.info?.separated ? "sep" : "")}` : ''
+  useEffect(() => {
+    const p = playerRef.current
+    if (!p) return
+    p.setGuideVolume(sRef.current.guideVolume)
+    if (!guideKey) {
+      p.loadGuide(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const b = await engine.realTrackBuffer('vocal', sRef.current.keyShift)
+      if (!cancelled) p.loadGuide(b)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [guideKey])
 
   /* 디버깅용: 브라우저 콘솔에서 window.__vocallab.notes 로 현재 노트를 볼 수 있다 */
   useEffect(() => {
