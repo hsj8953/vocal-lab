@@ -1,7 +1,7 @@
 'use client'
 
 import { ArrowDown, ArrowUp, Download, Merge, MousePointer2, Plus, Redo2, Scissors, Trash2, Undo2 } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { useStudio } from './studio-provider'
 import { Kbd, Section, Seg } from './ui-bits'
@@ -52,6 +52,7 @@ export function RailEdit() {
             <Scissors /> 재생 위치에서 자르기
           </Button>
         </div>
+        {n === 1 ? <LyricInput key={s.selection[0]} /> : null}
         <Button variant="destructive" size="sm" className="mt-2 w-full" disabled={!n} onClick={a.deleteSelected}>
           <Trash2 /> 삭제 <Kbd>Del</Kbd>
         </Button>
@@ -88,5 +89,34 @@ function Tool({ icon, text, k }: { icon: ReactNode; text: string; k: string }) {
       {text}
       <span className="hidden font-mono text-[9px] opacity-60 sm:inline">{k}</span>
     </span>
+  )
+}
+
+/** 선택한 노트 하나의 가사 고치기 */
+function LyricInput() {
+  const { s, a } = useStudio()
+  const note = s.notes.find((x) => x.id === s.selection[0])
+  const [v, setV] = useState(note?.lyric ?? '')
+  if (!note) return null
+  return (
+    <form
+      className="mt-2 flex gap-1.5"
+      onSubmit={(e) => {
+        e.preventDefault()
+        a.setNoteLyric(note.id, v.trim())
+      }}
+    >
+      <input
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+        onBlur={() => v.trim() !== (note.lyric ?? '') && a.setNoteLyric(note.id, v.trim())}
+        placeholder="이 노트의 가사 (예: 로, ~)"
+        aria-label="노트 가사"
+        className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background/60 px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      <Button type="submit" size="sm" variant="secondary">
+        가사 저장
+      </Button>
+    </form>
   )
 }

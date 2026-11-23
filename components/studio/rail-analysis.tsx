@@ -1,7 +1,7 @@
 'use client'
 
 import { AlertTriangle, FileText, Loader2, PencilLine, RefreshCw, Wand2, X } from 'lucide-react'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { METHOD_LABEL } from '@/lib/engine'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
@@ -345,6 +345,16 @@ function LyricsSection() {
               0
             </Button>
           </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Button size="sm" onClick={a.attachLyricsToNotes}>
+              노트에 가사 붙이기
+            </Button>
+            <Button size="sm" variant="outline" disabled={!s.notes.some((n) => n.lyric)} onClick={a.clearNoteLyrics}>
+              노트 가사 지우기
+            </Button>
+          </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">각 줄의 글자를 그 시간의 노트에 한 음절씩 나눠 붙여요. 한 글자를 여러 노트로 끌면 ~로 표시돼요. 되돌리기(Ctrl+Z)도 돼요.</p>
+          <ReadingPaste />
           <details className="mt-3 rounded-lg border border-border p-2.5">
             <summary className="cursor-pointer text-xs font-medium">다른 가사 찾기 (LRCLIB)</summary>
             <div className="mt-2">
@@ -401,5 +411,37 @@ function SeparationSection() {
       ) : null}
       {!demo && !hasVocalFile && !sep ? <p className="mt-2 text-[11px] text-muted-foreground">처음 한 번 모델 64MB를 받고, 곡마다 몇 분 걸려요. 결과는 저장해 둬서 같은 곡은 바로 끝나요.</p> : null}
     </Section>
+  )
+}
+
+function ReadingPaste() {
+  const { a } = useStudio()
+  const [text, setText] = useState('')
+  return (
+    <details className="mt-3 rounded-lg border border-border p-2.5">
+      <summary className="cursor-pointer text-xs font-medium">한국어 독음으로 바꾸기</summary>
+      <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+        독음을 한 줄씩 붙여넣으면 지금 가사의 줄 시간에 순서대로 들어가요. 간주(빈 줄)는 건너뛰니까 가사가 있는 줄만 순서대로 적으면 돼요. 시간이 붙은 LRC를 붙여넣어도 돼요.
+      </p>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={6}
+        placeholder={'로스토완노 고오코쿠\n...'}
+        aria-label="독음 붙여넣기"
+        className="mt-2 w-full resize-y rounded-md border border-input bg-background/60 p-2 text-xs leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      <Button
+        size="sm"
+        className="mt-2 w-full"
+        disabled={!text.trim()}
+        onClick={() => {
+          a.pasteReading(text)
+          setText('')
+        }}
+      >
+        독음 넣기
+      </Button>
+    </details>
   )
 }

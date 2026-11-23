@@ -1312,6 +1312,10 @@ export const realNudgeNoteFile = (sec: number) => real.nudgeNoteFile(sec)
 export const realAutoAlignNoteFile = () => real.autoAlignNoteFile()
 export const realSaveEdits = (notes: Note[]) => real.saveEdits(notes)
 export const realDiscardEdits = () => real.discardEdits()
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const realSaveLyrics = (l: any) => real.saveLyrics(l)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const realLoadLyrics = (): Promise<any> => real.loadLyrics()
 /** 디버깅용: 현재 곡의 내부 상태 */
 export const realSong = () => real.SONG
 /** 원곡 보컬의 음 높이(원곡 키, MIDI) — 없으면 NaN */

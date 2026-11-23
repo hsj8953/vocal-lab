@@ -237,6 +237,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     }
   }, [guideKey])
 
+  /* 가사는 원곡 파일별로 저장 (보정값 포함) */
+  useEffect(() => {
+    // 곡 불러오기 화면에서는 아직 이전 곡이 열려 있을 수 있어서 저장하지 않는다
+    if (!s.project.real || s.view === 'import' || s.analysis.status === 'running') return
+    const id = setTimeout(() => void engine.realSaveLyrics(s.lyrics), 500)
+    return () => clearTimeout(id)
+  }, [s.lyrics, s.project.real, s.view, s.analysis.status])
+
   /* 디버깅용: 브라우저 콘솔에서 window.__vocallab.notes 로 현재 노트를 볼 수 있다 */
   useEffect(() => {
     ;(window as unknown as { __vocallab: unknown }).__vocallab = {

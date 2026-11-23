@@ -3,6 +3,7 @@ import * as engine from '@/lib/engine'
 import type { AnalysisOptions, CrepeModel, Note, OctaveMode, PitchFrame, PitchModel, Player, Recorder } from '@/lib/engine'
 import { clamp } from '@/lib/music'
 import { parseLrc } from '@/lib/lrc'
+import { attachLyrics, replaceLineTexts } from '@/lib/lyric-align'
 import type { Notation } from '@/lib/music'
 import {
   DEMO_ABILITY,
@@ -254,6 +255,8 @@ export function createActions(env: ActionEnv) {
           prog,
         )
         const isNew = goStudio || !st.project.real
+        // 새 곡이면 이 곡에 저장해 둔 가사로 바꾼다 (가사 파일을 같이 넣었으면 그걸 유지)
+        const savedLyrics = isNew && !inputs.lyrics ? await engine.realLoadLyrics() : undefined
         playerRef.current?.seek(0)
         live.time = 0
         live.trace = []
@@ -283,6 +286,7 @@ export function createActions(env: ActionEnv) {
           },
           align: { status: al ? 'done' : 'idle', result: al ? { offsetMs: Math.round(al.offset * 1000), confidence: al.conf } : null },
           level: engine.realLevelInfo(),
+          ...(savedLyrics !== undefined ? { lyrics: savedLyrics && savedLyrics.lines?.length ? savedLyrics : null } : {}),
           guideAvailable: engine.realHasGuideVocal(),
           source: inputs.mr || res.info.separated ? (isNew ? 'mr' : p.source) : 'original',
           view: goStudio ? 'studio' : p.view,
@@ -432,6 +436,30 @@ export function createActions(env: ActionEnv) {
       if (kind === 'lyrics' && file) void loadLyrics(file)
     },
     setLyricsText,
+    pasteReading: (text: string) => {
+      if (/\[\d{1,3}:\d{1,2}/.test(text)) {
+        setLyricsText('붙여넣은 가사', text)
+        return
+      }
+      const cur = sRef.current.lyrics
+      if (!cur) {
+        notify('먼저 시간이 있는 가사(LRCLIB 등)를 불러와 주세요. 독음은 그 줄 시간에 맞춰 들어가요.')
+        return
+      }
+      const r = replaceLineTexts(cur.lines, text)
+      if (!r.given) return
+      set({ lyrics: { ...cur, name: cur.name.replace(/ · 독음$/, '') + ' · 독음', lines: r.lines } })
+      notify(r.given === r.timed ? `독음 ${r.given}줄을 줄 시간에 맞춰 넣었어요.` : `가사 줄은 ${r.timed}줄, 붙여넣은 독음은 ${r.given}줄이에요. 앞에서부터 순서대로 넣었으니 어긋난 곳을 확인해 주세요.`)
+    },
+    attachLyricsToNotes: () => {
+      const st = sRef.current
+      if (!st.lyrics) return
+      const r = attachLyrics(st.notes, st.lyrics.lines, st.lyrics.offset)
+      commitNotes(r.notes)
+      notify(`가사 ${r.linesUsed}줄을 노트에 붙였어요.${r.shaky.length ? ` 음절과 노트 수가 많이 다른 줄이 ${r.shaky.length}개 있어요.` : ''} 틀린 곳은 노트 편집에서 고칠 수 있어요.`)
+    },
+    clearNoteLyrics: () => commitNotes(sRef.current.notes.map((n) => ({ ...n, lyric: undefined }))),
+    setNoteLyric: (id: string, lyric: string) => commitNotes(sRef.current.notes.map((n) => (n.id === id ? { ...n, lyric: lyric || undefined } : n))),
     setLyricsOffset: (sec: number) => set((p) => (p.lyrics ? { lyrics: { ...p.lyrics, offset: Math.round(sec * 100) / 100 } } : {})),
     setSensitivity: (v: number) => set((p) => ({ analysis: { ...p.analysis, sensitivity: v } })),
     setSplit: (v: boolean) => set((p) => ({ analysis: { ...p.analysis, splitSyllables: v } })),
