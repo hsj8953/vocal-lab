@@ -429,6 +429,8 @@ export function createActions(env: ActionEnv) {
     setInput: (kind: InputKind, file: File | null) => {
       set((p) => {
         const inputs = { ...p.inputs }
+        // 데모 곡의 자리 표시 파일(file 없음)은 내 파일을 처음 넣는 순간 모두 비운다
+        if (file) for (const k of Object.keys(inputs) as InputKind[]) if (!inputs[k]?.file) delete inputs[k]
         if (file) inputs[kind] = { name: file.name, size: file.size, file }
         else delete inputs[kind]
         return { inputs, ...(kind === 'lyrics' && !file ? { lyrics: null } : {}) }
