@@ -272,6 +272,7 @@ function MethodRow() {
           <Wand2 className="size-3" /> CREPE 값 사용 {Math.round(info.crepeUsed * 100)}% 프레임
         </p>
       ) : null}
+      {info.quietDropped > 0 ? <p className="mt-1 text-[11px] text-muted-foreground">보컬이 아닌 작은 소리(전주·간주·아우트로에 남은 소리)로 생긴 노트 {info.quietDropped}개를 뺐어요. 빠진 소리가 있으면 감도를 올려 보세요.</p> : null}
       {info.syllableAdded > 0 ? <p className="mt-1 text-[11px] text-muted-foreground">음절 경계에서 노트 {info.syllableAdded}개를 나눴어요.</p> : null}
       {info.vocOffset ? <p className="mt-1 text-[11px] text-muted-foreground">보컬 파일이 원곡과 {info.vocOffset > 0 ? '+' : ''}{info.vocOffset.toFixed(2)}s 어긋나 있어서 맞췄어요.</p> : null}
     </div>

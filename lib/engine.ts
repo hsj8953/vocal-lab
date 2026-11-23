@@ -1270,6 +1270,8 @@ export interface RealInfo {
   seconds: number
   fileInfo: { name: string; lag: number; oct: number; score: number | null; tracks: number; added: number; autofillActive: boolean } | null
   syllableAdded: number
+  /** 작게 섞여 든 소리라서 뺀 노트 수 */
+  quietDropped: number
   crepeUsed: number | null
   vocOffset: number | null
   align: { offset: number; conf: number; manual: boolean } | null
