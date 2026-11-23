@@ -8,6 +8,7 @@ import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { fmtTime, noteName } from '@/lib/music'
 import { useStudio } from './studio-provider'
+import { LrclibSearch } from './lrclib-search'
 import { Section, Seg } from './ui-bits'
 
 export function RailAnalysis() {
@@ -344,9 +345,21 @@ function LyricsSection() {
               0
             </Button>
           </div>
+          <details className="mt-3 rounded-lg border border-border p-2.5">
+            <summary className="cursor-pointer text-xs font-medium">다른 가사 찾기 (LRCLIB)</summary>
+            <div className="mt-2">
+              <LrclibSearch />
+            </div>
+          </details>
         </>
       ) : (
         <>
+          <LrclibSearch />
+          <div className="my-3 flex items-center gap-2 text-[10px] text-muted-foreground">
+            <span className="h-px flex-1 bg-border" />
+            또는 파일로
+            <span className="h-px flex-1 bg-border" />
+          </div>
           <p className="text-xs leading-relaxed text-muted-foreground">시간이 붙은 가사 파일(.lrc)을 넣으면 피아노 롤 아래에 지금 부를 줄과 다음 줄이 떠요. 단어별 시간이 있는 확장 LRC면 단어마다 색이 바뀌어요.</p>
           <Button className="mt-3 w-full" variant="outline" onClick={() => input.current?.click()}>
             <FileText /> 가사 파일 넣기

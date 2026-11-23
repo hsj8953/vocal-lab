@@ -13,7 +13,7 @@ const SLOTS: { kind: InputKind; title: string; desc: string; accept: string; req
   { kind: 'mr', title: 'MR (반주)', desc: '있으면 원곡과 시간을 자동으로 맞춰요', accept: '.mp3,.wav,.m4a,.flac,audio/*', icon: AudioLines },
   { kind: 'vocal', title: '분리된 보컬', desc: '있으면 멜로디가 훨씬 정확해져요', accept: '.mp3,.wav,.m4a,.flac,audio/*', icon: Mic2 },
   { kind: 'noteFile', title: '노트 파일', desc: '.mid · Tony .csv — 분석 없이 바로 불러와요', accept: '.mid,.midi,.csv,text/csv,audio/midi', icon: FileMusic },
-  { kind: 'lyrics', title: '가사', desc: '.lrc (시간이 붙은 가사) — 노트 위에 가사를 띄워요', accept: '.lrc,.txt,text/plain', icon: FileText },
+  { kind: 'lyrics', title: '가사', desc: '.lrc 파일 — 없으면 스튜디오 분석 탭에서 LRCLIB로 바로 찾을 수 있어요', accept: '.lrc,.txt,text/plain', icon: FileText },
 ]
 
 function fmtSize(n: number) {

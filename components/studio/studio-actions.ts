@@ -358,6 +358,16 @@ export function createActions(env: ActionEnv) {
   }
 
   /* 가사 (.lrc) */
+  const setLyricsText = (name: string, text: string) => {
+    const lines = parseLrc(text)
+    if (!lines.length) {
+      notify('시간 정보가 있는 가사가 아니에요.')
+      return false
+    }
+    set({ lyrics: { name, lines, offset: 0 } })
+    notify(`가사 ${lines.filter((l) => l.text).length}줄을 불러왔어요.`)
+    return true
+  }
   const loadLyrics = async (file: File) => {
     try {
       const lines = parseLrc(await file.text())
@@ -421,6 +431,7 @@ export function createActions(env: ActionEnv) {
       })
       if (kind === 'lyrics' && file) void loadLyrics(file)
     },
+    setLyricsText,
     setLyricsOffset: (sec: number) => set((p) => (p.lyrics ? { lyrics: { ...p.lyrics, offset: Math.round(sec * 100) / 100 } } : {})),
     setSensitivity: (v: number) => set((p) => ({ analysis: { ...p.analysis, sensitivity: v } })),
     setSplit: (v: boolean) => set((p) => ({ analysis: { ...p.analysis, splitSyllables: v } })),
