@@ -72,7 +72,16 @@ export function RailAnalysis() {
           </label>
           <Switch id="split" checked={an.splitSyllables} onCheckedChange={(v) => a.setSplit(!!v)} />
         </div>
-        {s.project.real && !s.inputs.vocal ? <p className="mt-1 text-[11px] text-muted-foreground">음절 나누기는 분리된 보컬 파일이 있어야 동작해요.</p> : null}
+        {s.project.real && !s.inputs.vocal && !an.info?.separated ? <p className="mt-1 text-[11px] text-muted-foreground">음절 나누기는 분리된 보컬(파일 또는 AI 분리)이 있어야 동작해요.</p> : null}
+        {!s.inputs.vocal ? (
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <label htmlFor="sep2" className="text-xs">
+              <span className="font-medium">AI 보컬 분리 (UVR5 Kim_Vocal_2)</span>
+              <span className="block text-[11px] text-muted-foreground">보컬 파일이 없을 때 원곡에서 보컬과 반주를 나눠서 분석해요</span>
+            </label>
+            <Switch id="sep2" checked={an.separate} onCheckedChange={(v) => a.setSeparate(!!v)} />
+          </div>
+        ) : null}
         <div className="mt-4">
           <div className="flex items-center justify-between text-xs">
             <span className="font-medium">음 높이 분석기</span>
@@ -105,7 +114,7 @@ export function RailAnalysis() {
           ) : null}
           <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
             {an.pitchModel === 'crepe'
-              ? s.inputs.vocal
+              ? s.inputs.vocal || an.separate
                 ? 'CREPE로 음 높이를 더 촘촘하게 재고, 옥타브는 기본 분석기 판단을 따라요. 곡마다 처음 한 번만 계산하고 저장해 둬요.'
                 : 'CREPE는 분리된 보컬 파일이 있을 때만 쓰여요. 지금은 기본 분석기로 분석해요.'
               : '배음 분석과 규칙으로 음 높이를 찾아요. 가장 빠르고 옥타브 판단이 안정적이에요.'}
@@ -255,6 +264,11 @@ function MethodRow() {
             편집 버리기
           </Button>
         </div>
+      ) : null}
+      {info.separated ? (
+        <p className="mt-1.5 text-[11px] text-muted-foreground">
+          보컬: AI 분리 ({info.separated.model}){info.separated.cached ? ' · 저장된 결과 사용' : info.separated.seconds ? ` · ${Math.round(info.separated.seconds)}초 걸림 (${info.separated.ep === 'webgpu' ? '그래픽카드' : 'CPU'})` : ''}
+        </p>
       ) : null}
       {info.crepeUsed !== null && info.crepeUsed !== undefined ? (
         <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">

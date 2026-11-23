@@ -1207,6 +1207,8 @@ export interface RealOptions extends AnalysisOptions {
   crepeModel: CrepeModel
   /** 저장해 둔 직접 편집 노트가 있으면 그걸 쓸지 */
   useEdits: boolean
+  /** 보컬 파일이 없으면 AI(UVR5 Kim_Vocal_2)로 보컬을 분리할지 */
+  separate: boolean
 }
 
 export type AnalysisMethod = 'edits' | 'midi' | 'tony' | 'vocal+crepe+ai' | 'vocal+ai' | 'vocal' | 'mr' | 'original' | 'noteFile'
@@ -1220,6 +1222,7 @@ export interface RealInfo {
   vocOffset: number | null
   align: { offset: number; conf: number; manual: boolean } | null
   usingEdits: boolean
+  separated: { model: string; ep?: string; seconds?: number; cached?: boolean } | null
 }
 
 export interface RealResult {
@@ -1257,6 +1260,8 @@ export const realNudgeNoteFile = (sec: number) => real.nudgeNoteFile(sec)
 export const realAutoAlignNoteFile = () => real.autoAlignNoteFile()
 export const realSaveEdits = (notes: Note[]) => real.saveEdits(notes)
 export const realDiscardEdits = () => real.discardEdits()
+/** 디버깅용: 현재 곡의 내부 상태 */
+export const realSong = () => real.SONG
 export const realLevelInfo = (): { orig: number; mr: number } | null => real.levelInfo()
 
 export async function realTrackBuffer(track: 'mr' | 'original', semitones: number, onProg?: (p: number, eta: string) => void): Promise<AudioBuffer | null> {

@@ -37,6 +37,8 @@ export interface AnalysisState {
   autofill: boolean
   pitchModel: PitchModel
   crepeModel: CrepeModel
+  /** 보컬 파일이 없을 때 AI로 보컬·반주 분리 */
+  separate: boolean
   info: RealInfo | null
 }
 
@@ -144,6 +146,7 @@ export function createInitialState(): StudioState {
       autofill: true,
       pitchModel: 'classic',
       crepeModel: 'small',
+      separate: true,
       info: null,
     },
     align: { status: 'done', result: engine.DEMO_ALIGN },

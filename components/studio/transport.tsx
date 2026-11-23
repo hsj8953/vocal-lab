@@ -20,7 +20,7 @@ export function Transport() {
     if (el.textContent !== v) el.textContent = v
   })
 
-  const hasMr = !!s.inputs.mr
+  const hasMr = !!s.inputs.mr || (s.project.real && !!s.analysis.info?.separated)
   const loading = s.bufferStatus !== 'ready'
 
   return (
@@ -60,7 +60,7 @@ export function Transport() {
           value={s.source}
           onChange={(v) => a.setSource(v)}
           options={[
-            { value: 'mr', label: 'MR', title: hasMr ? '반주만 재생' : 'MR 파일이 없어요' },
+            { value: 'mr', label: 'MR', title: s.inputs.mr ? '반주만 재생' : hasMr ? 'AI로 분리한 반주 (원곡 − 보컬)' : 'MR 파일이 없어요' },
             { value: 'original', label: '원곡 가이드', title: '원곡 멜로디를 같이 들려줘요' },
           ].filter((o) => hasMr || o.value !== 'mr') as { value: 'mr' | 'original'; label: string }[]}
         />

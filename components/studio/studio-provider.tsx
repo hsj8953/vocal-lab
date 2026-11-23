@@ -206,13 +206,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           micLatencyMs: s.micLatencyMs,
           notation: s.notation,
           volume: s.volume,
-          analysis: { sensitivity: s.analysis.sensitivity, splitSyllables: s.analysis.splitSyllables, autofill: s.analysis.autofill, pitchModel: s.analysis.pitchModel, crepeModel: s.analysis.crepeModel },
+          analysis: { sensitivity: s.analysis.sensitivity, splitSyllables: s.analysis.splitSyllables, autofill: s.analysis.autofill, pitchModel: s.analysis.pitchModel, crepeModel: s.analysis.crepeModel, separate: s.analysis.separate },
         }),
       )
     } catch {
       /* 무시 */
     }
-  }, [s.userRange, s.syncMs, s.micLatencyMs, s.notation, s.volume, s.analysis.sensitivity, s.analysis.splitSyllables, s.analysis.autofill, s.analysis.pitchModel, s.analysis.crepeModel])
+  }, [s.userRange, s.syncMs, s.micLatencyMs, s.notation, s.volume, s.analysis.sensitivity, s.analysis.splitSyllables, s.analysis.autofill, s.analysis.pitchModel, s.analysis.crepeModel, s.analysis.separate])
 
   /* 디버깅용: 브라우저 콘솔에서 window.__vocallab.notes 로 현재 노트를 볼 수 있다 */
   useEffect(() => {
@@ -222,6 +222,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       },
       get notes() {
         return sRef.current.notes
+      },
+      get song() {
+        return engine.realSong()
       },
     }
   }, [])
