@@ -142,6 +142,8 @@ export interface Live {
   trace: TracePoint[]
   noteScore: Map<string, [number, number, number]>
   windowSec: number
+  /** 피아노 롤 아래 가사 줄에 그릴 가사 */
+  lyrics: Lyrics | null
 }
 
 export const DEMO_ABILITY: UserRange = { low: 47.7, high: 69.2 }
@@ -226,6 +228,7 @@ export function createLive(): Live {
     trace: [],
     noteScore: new Map(),
     windowSec: 9,
+    lyrics: null,
   }
 }
 

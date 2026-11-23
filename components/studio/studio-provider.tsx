@@ -90,6 +90,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   L.userRange = s.userRange
   L.selection = new Set(s.selection)
   L.notation = s.notation
+  L.lyrics = s.lyrics
   L.edit = s.view === 'studio' && s.railTab === 'edit'
   L.tool = s.tool
   L.micOn = s.mic.on

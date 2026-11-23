@@ -51,14 +51,14 @@ export function LyricsOverlay() {
     }
     const showNextOnly = blank && next && next.t - t < 3
     cur.style.opacity = blank ? '0' : '1'
-    if (origEl.current) origEl.current.style.opacity = blank || !origEl.current.textContent ? '0' : '0.7'
+    if (origEl.current) origEl.current.style.opacity = blank || !origEl.current.textContent ? '0' : '1'
     nxt.style.opacity = blank ? (showNextOnly ? '0.85' : '0') : '0.55'
   })
 
   if (!lyrics) return null
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex flex-col items-center gap-1 px-[72px]" aria-live="off">
-      <div ref={origEl} className="max-w-full truncate rounded-md bg-stage/60 px-2 text-center text-xs text-foreground/80 transition-opacity duration-150" />
+      <div ref={origEl} className="max-w-full truncate rounded-md bg-stage/60 px-2 text-center text-sm text-foreground/85 transition-opacity duration-150" />
       <div ref={curEl} className="max-w-full truncate rounded-lg bg-stage/75 px-3 py-1 text-center text-lg font-bold text-foreground backdrop-blur transition-opacity duration-150 sm:text-xl" />
       <div ref={nextEl} className="max-w-full truncate rounded-md bg-stage/60 px-2.5 py-0.5 text-center text-sm font-medium text-foreground/90 transition-opacity duration-150" />
     </div>
