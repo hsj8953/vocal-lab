@@ -122,12 +122,13 @@ export function attachLyrics(notes: Note[], lines: LyricLine[], offset: number):
   let used = 0
   const EARLY = 0.2 // 가사 줄 시간보다 조금 일찍 시작하는 노트도 그 줄로
   for (const l of textLines) {
-    if (!l.text) continue
+    const shown = (l.reading || l.text || '').trim()
+    if (!shown) continue
     const idx: number[] = []
     out.forEach((n, k) => {
       if (n.start >= l.t - EARLY && n.start < l.end - EARLY) idx.push(k)
     })
-    const syl = syllables(l.text)
+    const syl = syllables(shown)
     if (!idx.length || !syl.length) continue
     const lyr = alignLine(
       idx.map((k) => out[k]),
@@ -136,14 +137,14 @@ export function attachLyrics(notes: Note[], lines: LyricLine[], offset: number):
     idx.forEach((k, m) => (out[k].lyric = lyr[m] || undefined))
     used++
     const ratio = idx.length / syl.length
-    if (ratio > 1.8 || ratio < 0.6) shaky.push({ t: l.t, text: l.text, notes: idx.length, syllables: syl.length })
+    if (ratio > 1.8 || ratio < 0.6) shaky.push({ t: l.t, text: shown, notes: idx.length, syllables: syl.length })
   }
   return { notes: out, linesUsed: used, shaky }
 }
 
 /**
- * 독음 붙여넣기: 시간이 있는 원래 가사(예: 일본어)의 줄 시간에 한국어 독음 줄을 차례로 덮어씌운다.
- * 빈 줄(간주)은 그대로 두고, 가사가 있는 줄끼리 순서대로 짝짓는다.
+ * 독음 붙여넣기: 시간이 있는 원래 가사(예: 일본어)의 줄에 한국어 독음을 차례로 넣는다 (원문은 그대로 둔다).
+ * 빈 줄(간주)은 건너뛰고, 가사가 있는 줄끼리 순서대로 짝짓는다.
  */
 export function replaceLineTexts(lines: LyricLine[], pasted: string): { lines: LyricLine[]; timed: number; given: number } {
   const given = pasted
@@ -154,8 +155,8 @@ export function replaceLineTexts(lines: LyricLine[], pasted: string): { lines: L
   const timed = lines.filter((l) => l.text).length
   const out = lines.map((l) => {
     if (!l.text) return l
-    const t = given[k++]
-    return t === undefined ? l : { t: l.t, text: t }
+    const r = given[k++]
+    return r === undefined ? l : { ...l, reading: r }
   })
   return { lines: out, timed, given: given.length }
 }

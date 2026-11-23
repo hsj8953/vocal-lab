@@ -48,7 +48,10 @@ export interface LyricWord {
 }
 export interface LyricLine {
   t: number
+  /** 원래 가사 (예: 일본어) */
   text: string
+  /** 한국어 독음 — 있으면 화면 표시와 노트 붙이기에 이걸 쓴다 */
+  reading?: string
   /** 단어별 시간 (확장 LRC <mm:ss.xx>) */
   words?: LyricWord[]
 }

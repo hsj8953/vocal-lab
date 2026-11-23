@@ -4,6 +4,7 @@ import type { AnalysisOptions, CrepeModel, Note, OctaveMode, PitchFrame, PitchMo
 import { clamp } from '@/lib/music'
 import { parseLrc } from '@/lib/lrc'
 import { attachLyrics, replaceLineTexts } from '@/lib/lyric-align'
+import type { LyricLine } from './studio-types'
 import type { Notation } from '@/lib/music'
 import {
   DEMO_ABILITY,
@@ -438,6 +439,28 @@ export function createActions(env: ActionEnv) {
       if (kind === 'lyrics' && file) void loadLyrics(file)
     },
     setLyricsText,
+    /* 가사 편집기 */
+    updateLyricLine: (i: number, patch: Partial<LyricLine>) =>
+      set((p) => {
+        if (!p.lyrics) return {}
+        const lines = p.lyrics.lines.map((l, k) => (k === i ? { ...l, ...patch, ...(patch.text !== undefined ? { words: undefined } : {}) } : l))
+        // 시간을 바꿨으면 시간순으로 다시 정렬
+        if (patch.t !== undefined) lines.sort((x, y) => x.t - y.t)
+        return { lyrics: { ...p.lyrics, lines } }
+      }),
+    addLyricLine: (after: number) =>
+      set((p) => {
+        if (!p.lyrics) return {}
+        const lines = [...p.lyrics.lines]
+        const prev = lines[after]
+        const next = lines[after + 1]
+        const t = prev ? (next ? (prev.t + next.t) / 2 : prev.t + 2) : 0
+        lines.splice(after + 1, 0, { t: Math.round(t * 100) / 100, text: '' })
+        return { lyrics: { ...p.lyrics, lines } }
+      }),
+    removeLyricLine: (i: number) =>
+      set((p) => (p.lyrics ? { lyrics: { ...p.lyrics, lines: p.lyrics.lines.filter((_, k) => k !== i) } } : {})),
+    newLyrics: () => set({ lyrics: { name: '직접 입력한 가사', lines: [{ t: 0, text: '' }], offset: 0 } }),
     pasteReading: (text: string) => {
       if (/\[\d{1,3}:\d{1,2}/.test(text)) {
         setLyricsText('붙여넣은 가사', text)
@@ -450,7 +473,7 @@ export function createActions(env: ActionEnv) {
       }
       const r = replaceLineTexts(cur.lines, text)
       if (!r.given) return
-      set({ lyrics: { ...cur, name: cur.name.replace(/ · 독음$/, '') + ' · 독음', lines: r.lines } })
+      set({ lyrics: { ...cur, lines: r.lines } })
       notify(r.given === r.timed ? `독음 ${r.given}줄을 줄 시간에 맞춰 넣었어요.` : `가사 줄은 ${r.timed}줄, 붙여넣은 독음은 ${r.given}줄이에요. 앞에서부터 순서대로 넣었으니 어긋난 곳을 확인해 주세요.`)
     },
     attachLyricsToNotes: () => {

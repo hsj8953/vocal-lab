@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { fmtTime, noteName } from '@/lib/music'
 import { useStudio } from './studio-provider'
 import { LrclibSearch } from './lrclib-search'
+import { LyricsEditor } from './lyrics-editor'
 import { Section, Seg } from './ui-bits'
 
 export function RailAnalysis() {
@@ -313,9 +314,11 @@ function NoteFileSection() {
 function LyricsSection() {
   const { s, a } = useStudio()
   const input = useRef<HTMLInputElement>(null)
+  const [editing, setEditing] = useState(false)
   const ly = s.lyrics
   return (
     <Section title="가사" hint={ly ? ly.name : '.lrc 파일'}>
+      {editing && ly ? <LyricsEditor onClose={() => setEditing(false)} /> : null}
       <input ref={input} type="file" accept=".lrc,.txt,text/plain" className="sr-only" aria-label="가사 파일 선택" onChange={(e) => e.target.files?.[0] && a.setInput('lyrics', e.target.files[0])} />
       {ly ? (
         <>
@@ -327,8 +330,11 @@ function LyricsSection() {
               <X /> 빼기
             </Button>
           </div>
-          <div className="mt-2 flex items-center justify-between text-xs">
-            <span className="font-medium">가사 타이밍</span>
+          <Button className="mt-2 w-full" variant="secondary" onClick={() => setEditing(true)}>
+            가사·독음 편집 ({ly.lines.filter((l) => l.reading).length}/{ly.lines.filter((l) => l.text || l.reading).length}줄 독음)
+          </Button>
+          <div className="mt-3 flex items-center justify-between text-xs">
+            <span className="font-medium">전체 타이밍 보정</span>
             <span className="font-mono tabular text-muted-foreground">
               {ly.offset > 0 ? '+' : ly.offset < 0 ? '−' : '±'}
               {Math.abs(ly.offset).toFixed(1)}s
@@ -372,9 +378,20 @@ function LyricsSection() {
             <span className="h-px flex-1 bg-border" />
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground">시간이 붙은 가사 파일(.lrc)을 넣으면 피아노 롤 아래에 지금 부를 줄과 다음 줄이 떠요. 단어별 시간이 있는 확장 LRC면 단어마다 색이 바뀌어요.</p>
-          <Button className="mt-3 w-full" variant="outline" onClick={() => input.current?.click()}>
-            <FileText /> 가사 파일 넣기
-          </Button>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Button variant="outline" onClick={() => input.current?.click()}>
+              <FileText /> 가사 파일 넣기
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                a.newLyrics()
+                setEditing(true)
+              }}
+            >
+              직접 입력하기
+            </Button>
+          </div>
         </>
       )}
     </Section>
@@ -420,9 +437,9 @@ function ReadingPaste() {
   const [text, setText] = useState('')
   return (
     <details className="mt-3 rounded-lg border border-border p-2.5">
-      <summary className="cursor-pointer text-xs font-medium">한국어 독음으로 바꾸기</summary>
+      <summary className="cursor-pointer text-xs font-medium">독음 한꺼번에 붙여넣기</summary>
       <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-        독음을 한 줄씩 붙여넣으면 지금 가사의 줄 시간에 순서대로 들어가요. 간주(빈 줄)는 건너뛰니까 가사가 있는 줄만 순서대로 적으면 돼요. 시간이 붙은 LRC를 붙여넣어도 돼요.
+        독음을 한 줄씩 붙여넣으면 가사가 있는 줄의 독음 칸에 순서대로 들어가요(원문은 그대로). 간주(빈 줄)는 건너뛰어요. 들어간 뒤 '가사·독음 편집'에서 줄마다 확인하고 고칠 수 있어요.
       </p>
       <textarea
         value={text}
