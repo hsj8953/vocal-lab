@@ -80,11 +80,11 @@ export function LiveHud() {
       <div className="pointer-events-none absolute top-2 left-[64px] right-2 z-10 flex flex-wrap items-start gap-2 sm:left-[68px]">
         <div className="pointer-events-auto flex min-w-0 items-stretch gap-3 rounded-xl border border-border bg-stage/85 p-2.5 pr-3 backdrop-blur-md">
           <div className="flex items-end gap-4">
-            <Metric label="불러야 할 음" valueRef={targetEl} sub={noteEl} />
-            <Metric label="내 음" valueRef={userEl} />
-            <div className="w-[76px]">
+            <Metric label="불러야 할 음" valueRef={targetEl} sub={noteEl} wide />
+            <Metric label="내 음" valueRef={userEl} wide={s.notation === 'korean'} />
+            <div className="w-[84px] shrink-0">
               <div className="text-[10px] font-medium text-muted-foreground">차이</div>
-              <span ref={diffEl} className="block font-mono text-[22px] leading-7 font-semibold tabular" aria-live="off">
+              <span ref={diffEl} className="block font-mono text-[22px] leading-7 font-semibold whitespace-nowrap tabular" aria-live="off">
                 —
               </span>
             </div>
@@ -133,14 +133,15 @@ export function LiveHud() {
   )
 }
 
-function Metric({ label, valueRef, sub }: { label: string; valueRef: React.RefObject<HTMLSpanElement | null>; sub?: React.RefObject<HTMLSpanElement | null> }) {
+/** 값이 바뀌어도 칸 너비가 변하지 않게 고정 폭으로 그린다 (실시간 갱신 시 HUD가 흔들리지 않도록) */
+function Metric({ label, valueRef, sub, wide }: { label: string; valueRef: React.RefObject<HTMLSpanElement | null>; sub?: React.RefObject<HTMLSpanElement | null>; wide?: boolean }) {
   return (
-    <div className="min-w-[64px]">
-      <div className="flex items-baseline gap-1.5 text-[10px] font-medium text-muted-foreground">
-        {label}
-        {sub ? <span ref={sub} className="text-[11px] font-semibold text-foreground/80" /> : null}
+    <div className={`relative shrink-0 ${wide ? 'w-[104px]' : 'w-[72px]'}`}>
+      <div className="flex items-baseline gap-1.5 text-[10px] font-medium whitespace-nowrap text-muted-foreground">
+        <span className="shrink-0">{label}</span>
+        {sub ? <span ref={sub} className="min-w-0 truncate text-[11px] font-semibold text-foreground/80" /> : null}
       </div>
-      <span ref={valueRef} className="block font-mono text-[22px] leading-7 font-semibold tabular">
+      <span ref={valueRef} className="block overflow-hidden font-mono text-[22px] leading-7 font-semibold whitespace-nowrap tabular">
         —
       </span>
     </div>
