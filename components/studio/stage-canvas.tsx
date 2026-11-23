@@ -149,7 +149,7 @@ export function StageCanvas() {
     ctx.clip()
 
     /* 마디선 */
-    const barSec = 240 / bpmRef.current
+    const barSec = bpmRef.current > 0 ? 240 / bpmRef.current : 5
     const tL = t - (headX - GUTTER) / pxs
     const tR = t + (w - headX) / pxs
     ctx.fillStyle = PAL.barLine

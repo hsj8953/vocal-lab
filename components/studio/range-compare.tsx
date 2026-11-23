@@ -24,8 +24,8 @@ export function RangeCompare({ spans, notation, note }: { spans: Span[]; notatio
     <div>
       <div className="relative">
         {ticks.map((m) => (
-          <div key={m} className="absolute inset-y-0 w-px bg-border" style={{ left: `${pct(m)}%` }}>
-            <span className="absolute -bottom-5 -translate-x-1/2 font-mono text-[9px] text-muted-foreground">{noteName(m, notation)}</span>
+          <div key={m} className="absolute top-0 bottom-5 w-px bg-border" style={{ left: `${pct(m)}%` }}>
+            <span className="absolute top-full mt-1 -translate-x-1/2 whitespace-nowrap font-mono text-[9px] text-muted-foreground">{noteName(m, notation)}</span>
           </div>
         ))}
         <ul className="relative flex flex-col gap-3 pb-6">
@@ -53,7 +53,7 @@ export function RangeCompare({ spans, notation, note }: { spans: Span[]; notatio
           ))}
         </ul>
       </div>
-      {note ? <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{note}</p> : null}
+      {note ? <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{note}</p> : null}
     </div>
   )
 }

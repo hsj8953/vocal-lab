@@ -84,9 +84,17 @@ export function Transport() {
         </div>
 
         <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
-          {loading ? <span role="status">음원 준비 중…</span> : null}
+          {loading ? <span role="status">{s.bufferMsg ?? '음원 준비 중…'}</span> : null}
+          {s.level ? (
+            <span className="hidden xl:inline" title="원곡과 MR의 음량 차이를 자동으로 맞췄어요">
+              음량 맞춤 · 원곡 {s.level.orig >= 0 ? '+' : '−'}
+              {Math.abs(s.level.orig).toFixed(1)}dB / MR {s.level.mr >= 0 ? '+' : '−'}
+              {Math.abs(s.level.mr).toFixed(1)}dB
+            </span>
+          ) : null}
           <span className="tabular">
-            키 <b className="font-mono text-foreground">{d.shift > 0 ? `+${d.shift}` : d.shift}</b>
+            키 <b className="font-mono text-foreground">{s.keyShift > 0 ? `+${s.keyShift}` : s.keyShift}</b>
+            {d.octave ? <b className="ml-1 rounded bg-muted px-1 font-mono text-[11px] text-foreground" title={d.octave < 0 ? '원곡보다 한 옥타브 낮게 불러요' : '원곡보다 한 옥타브 높게 불러요'}>{d.octave < 0 ? '8vb' : '8va'}</b> : null}
             {d.summary ? (
               <span className="hidden md:inline">
                 {' '}

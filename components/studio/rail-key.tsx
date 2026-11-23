@@ -114,7 +114,8 @@ export function RailKey() {
           />
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">
-          총 이동 {fmtSigned(d.shift)}반음 {recShift !== d.shift ? `· 추천은 ${fmtSigned(recShift)}` : ''}
+          노트 총 이동 {fmtSigned(d.shift)}반음 {recShift !== d.shift ? `· 추천은 ${fmtSigned(recShift)}` : ''}
+          {s.project.real ? ' · 반주는 키만큼만 바뀌고, 옥타브는 내가 부를 노트만 옮겨요.' : ''}
         </p>
       </Section>
 

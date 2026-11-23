@@ -112,13 +112,15 @@ function SyncControl() {
         <span className="sr-only sm:hidden">싱크 보정</span>
       </Button>
       {open ? (
-        <div role="dialog" aria-label="싱크 보정" className="absolute right-0 z-50 mt-2 w-72 rounded-xl border border-border bg-popover p-4 shadow-xl">
+        <div role="dialog" aria-label="싱크 보정" className="absolute right-0 z-50 mt-2 w-80 max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover p-4 shadow-xl">
           <div className="flex items-baseline justify-between">
             <h2 className="text-[13px] font-semibold">싱크 보정</h2>
             <span className="font-mono text-sm tabular">{s.syncMs > 0 ? `+${s.syncMs}` : s.syncMs}ms</span>
           </div>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">소리보다 화면이 늦으면 +, 빠르면 −로 맞춰 주세요. 블루투스 이어폰은 보통 +100~200ms가 필요해요.</p>
-          <Slider className="mt-4" aria-label="싱크 보정(ms)" min={-400} max={400} step={5} value={[s.syncMs]} onValueChange={(v) => a.setSyncMs(Array.isArray(v) ? v[0] : v)} />
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            노트가 노래보다 <b className="text-foreground">늦게</b> 지나가면 <b className="text-foreground">+</b>, <b className="text-foreground">먼저</b> 지나가면 <b className="text-foreground">−</b>로 맞춰 주세요. 블루투스 이어폰은 보통 +150~300ms가 필요해요.
+          </p>
+          <Slider className="mt-4" aria-label="싱크 보정(ms)" min={-800} max={800} step={5} value={[s.syncMs]} onValueChange={(v) => a.setSyncMs(Array.isArray(v) ? v[0] : v)} />
           <div className="mt-3 grid grid-cols-5 gap-1.5">
             {[-50, -10, 0, 10, 50].map((n) => (
               <Button key={n} variant="outline" size="xs" onClick={() => a.setSyncMs(n === 0 ? 0 : s.syncMs + n)}>
@@ -126,6 +128,23 @@ function SyncControl() {
               </Button>
             ))}
           </div>
+          <div className="mt-1.5 grid grid-cols-5 gap-1.5">
+            {[-200, 0, 200, 300, 400].map((n) => (
+              <Button key={n} variant={s.syncMs === n ? 'secondary' : 'ghost'} size="xs" onClick={() => a.setSyncMs(n)}>
+                {n > 0 ? `+${n}` : n}
+              </Button>
+            ))}
+          </div>
+          <div className="mt-4 flex items-baseline justify-between border-t border-border pt-3">
+            <h3 className="text-[13px] font-semibold">마이크 지연</h3>
+            <span className="font-mono text-sm tabular">{s.micLatencyMs}ms</span>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">내 목소리 선이 노트보다 늦게 그려지면 올려 주세요. 보통 40~100ms예요.</p>
+          <Slider className="mt-3" aria-label="마이크 지연(ms)" min={0} max={300} step={5} value={[s.micLatencyMs]} onValueChange={(v) => a.setMicLatency(Array.isArray(v) ? v[0] : v)} />
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            스피커 출력 지연 {s.outputLatencyMs}ms는 자동으로 빼고 있어요 · 화면 총 보정 {s.outputLatencyMs - s.syncMs > 0 ? '+' : ''}
+            {s.outputLatencyMs - s.syncMs}ms
+          </p>
         </div>
       ) : null}
     </div>

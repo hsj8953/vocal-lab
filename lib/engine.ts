@@ -11,6 +11,9 @@
  */
 
 import { hzToMidi, midiToHz } from './music'
+import * as realMod from './real/song'
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const real = realMod as any
 
 /* ------------------------------------------------------------------ */
 /* 타입                                                                 */
@@ -896,6 +899,8 @@ export interface Player {
   isPlaying: () => boolean
   setVolume: (v: number) => void
   onEnded: (cb: () => void) => void
+  /** 출력 장치 지연(ms) */
+  outputLatencyMs: () => number
   dispose: () => void
 }
 
@@ -913,10 +918,18 @@ export function createPlayer(): Player {
 
   const ensure = () => {
     if (!ctx) {
-      ctx = new AudioContext({ latencyHint: 'interactive' })
+      ctx = real.audioCtx() as AudioContext
       gain = ctx.createGain()
       gain.gain.value = volume * volume
-      gain.connect(ctx.destination)
+      // 원곡/MR 음량을 맞추느라 올린 소리가 찢어지지 않게 리미터를 건다
+      const lim = ctx.createDynamicsCompressor()
+      lim.threshold.value = -2
+      lim.knee.value = 0
+      lim.ratio.value = 20
+      lim.attack.value = 0.002
+      lim.release.value = 0.1
+      gain.connect(lim)
+      lim.connect(ctx.destination)
     }
     return ctx
   }
@@ -984,7 +997,7 @@ export function createPlayer(): Player {
       if (was) startSrc()
     },
     getTime() {
-      const lat = ctx ? (ctx.outputLatency || ctx.baseLatency || 0) : 0
+      const lat = ctx ? (ctx.outputLatency || 0) + (ctx.baseLatency || 0) : 0
       const t = playing ? rawPos() - lat : offset
       return Math.max(0, buffer ? Math.min(t, buffer.duration) : t)
     },
@@ -996,9 +1009,13 @@ export function createPlayer(): Player {
     onEnded(cb) {
       endedCb = cb
     },
+    outputLatencyMs() {
+      const c = ensure()
+      return Math.round(((c.outputLatency || 0) + (c.baseLatency || 0)) * 1000)
+    },
     dispose() {
       stopSrc()
-      void ctx?.close()
+      gain?.disconnect()
       ctx = null
     },
   }
@@ -1111,10 +1128,18 @@ export async function startMic(opts: MicOptions = {}): Promise<MicResult> {
   if (mode !== 'demo') {
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('이 브라우저에서는 마이크를 사용할 수 없어요.')
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      })
+      let stream: MediaStream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        })
+      } catch (e1) {
+        const n = (e1 as { name?: string })?.name
+        if (n === 'NotAllowedError' || n === 'NotFoundError') throw e1
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      }
       const ctx = new AudioContext()
+      await ctx.resume().catch(() => {})
       const node = ctx.createMediaStreamSource(stream)
       const an = ctx.createAnalyser()
       an.fftSize = 2048
@@ -1135,12 +1160,22 @@ export async function startMic(opts: MicOptions = {}): Promise<MicResult> {
       mic = { stream, ctx, timer }
       return { mode: 'live', fellBack: false }
     } catch (e) {
-      reason = e instanceof Error ? e.message : '마이크 권한을 얻지 못했어요.'
-      if (mode === 'live') throw e
+      reason = micErrorMessage(e)
+      if (mode === 'live') throw new Error(reason)
     }
   }
   startDemoSinger(opts.demo ?? { getTargetMidi: () => null })
   return { mode: 'demo', fellBack: mode === 'auto', reason }
+}
+
+export function micErrorMessage(e: unknown): string {
+  const n = (e as { name?: string })?.name ?? ''
+  if (typeof window !== 'undefined' && window.self !== window.top) return '미리보기 화면 안에서는 마이크가 막혀 있어요. 사이트 주소를 새 탭에서 열어 주세요.'
+  if (n === 'NotFoundError') return '마이크 장치를 찾지 못했어요. 연결을 확인해 주세요.'
+  if (n === 'NotReadableError') return '윈도우가 마이크를 열지 못했어요. 마이크를 쓰는 다른 프로그램을 끄고 크롬을 재시작해 보세요. (NotReadableError)'
+  if (n === 'NotAllowedError') return '마이크 권한이 막혀 있어요. 주소창 왼쪽 아이콘 → 마이크 허용, 윈도우 설정 → 개인정보 → 마이크도 확인해 주세요.'
+  if (n === 'SecurityError') return 'https 주소에서만 마이크를 쓸 수 있어요.'
+  return e instanceof Error ? e.message : '마이크 권한을 얻지 못했어요.'
 }
 
 export function stopMic(): void {
@@ -1149,4 +1184,81 @@ export function stopMic(): void {
   mic.stream?.getTracks().forEach((t) => t.stop())
   void mic.ctx?.close()
   mic = null
+}
+
+/* ------------------------------------------------------------------ */
+/* 실제 엔진 (사용자 파일)                                                */
+/* ------------------------------------------------------------------ */
+
+
+export type PitchModel = 'crepe' | 'classic'
+export type CrepeModel = 'tiny' | 'small' | 'medium'
+
+export interface RealInputs {
+  original?: File | null
+  mr?: File | null
+  vocal?: File | null
+  noteFile?: File | null
+}
+
+export interface RealOptions extends AnalysisOptions {
+  autofill: boolean
+  pitchModel: PitchModel
+  crepeModel: CrepeModel
+  /** 저장해 둔 직접 편집 노트가 있으면 그걸 쓸지 */
+  useEdits: boolean
+}
+
+export type AnalysisMethod = 'edits' | 'midi' | 'tony' | 'vocal+crepe+ai' | 'vocal+ai' | 'vocal' | 'mr' | 'original' | 'noteFile'
+
+export interface RealInfo {
+  method: AnalysisMethod
+  seconds: number
+  fileInfo: { name: string; lag: number; oct: number; score: number | null; tracks: number; added: number; autofillActive: boolean } | null
+  syllableAdded: number
+  crepeUsed: number | null
+  vocOffset: number | null
+  align: { offset: number; conf: number; manual: boolean } | null
+  usingEdits: boolean
+}
+
+export interface RealResult {
+  notes: (Note & { fill?: boolean })[]
+  duration: number
+  warnings: string[]
+  info: RealInfo
+}
+
+export const METHOD_LABEL: Record<AnalysisMethod, string> = {
+  edits: '직접 편집한 노트',
+  midi: 'MIDI 노트 파일',
+  tony: 'Tony 노트 파일',
+  'vocal+crepe+ai': '분리된 보컬 + CREPE + AI 노트',
+  'vocal+ai': '분리된 보컬 + AI 노트',
+  vocal: '분리된 보컬',
+  mr: 'MR 비교 · 보컬 구간만',
+  original: '원곡만 · 반주 섞일 수 있음',
+  noteFile: '노트 파일',
+}
+
+export async function analyzeReal(inputs: RealInputs, opts: RealOptions, onProgress?: ProgressFn): Promise<RealResult> {
+  return real.analyzeSong(inputs, opts, onProgress) as Promise<RealResult>
+}
+
+export async function realAlignMr(): Promise<AlignResult | null> {
+  const r = await real.alignMrReal(true)
+  return r ? { offsetMs: Math.round(r.offset * 1000), confidence: r.conf } : null
+}
+export function realNudgeMr(sec: number): AlignResult | null {
+  const r = real.nudgeMrOffset(sec)
+  return r ? { offsetMs: Math.round(r.offset * 1000), confidence: r.conf } : null
+}
+export const realNudgeNoteFile = (sec: number) => real.nudgeNoteFile(sec)
+export const realAutoAlignNoteFile = () => real.autoAlignNoteFile()
+export const realSaveEdits = (notes: Note[]) => real.saveEdits(notes)
+export const realDiscardEdits = () => real.discardEdits()
+export const realLevelInfo = (): { orig: number; mr: number } | null => real.levelInfo()
+
+export async function realTrackBuffer(track: 'mr' | 'original', semitones: number, onProg?: (p: number, eta: string) => void): Promise<AudioBuffer | null> {
+  return real.getTrackBuffer(track, semitones, onProg)
 }

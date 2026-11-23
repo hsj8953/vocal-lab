@@ -1,6 +1,6 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import * as engine from '@/lib/engine'
-import type { AnalysisOptions, Note, OctaveMode, PitchFrame, Player, Recorder } from '@/lib/engine'
+import type { AnalysisOptions, CrepeModel, Note, OctaveMode, PitchFrame, PitchModel, Player, Recorder } from '@/lib/engine'
 import { clamp } from '@/lib/music'
 import type { Notation } from '@/lib/music'
 import {
@@ -80,7 +80,7 @@ export function createActions(env: ActionEnv) {
     const st = sRef.current
     try {
       const res = await engine.startMic({
-        mode: st.micPref === 'demo' ? 'demo' : 'auto',
+        mode: st.micPref === 'demo' ? 'demo' : st.project.real ? 'live' : 'auto',
         demo: {
           ability: DEMO_ABILITY,
           getTargetMidi: () => {
@@ -94,8 +94,8 @@ export function createActions(env: ActionEnv) {
       live.micOn = true
       set({ mic: { on: true, mode: res.mode } })
       if (res.fellBack) notify('마이크를 사용할 수 없어 데모 보컬(시뮬레이션)로 전환했어요.')
-    } catch {
-      notify('마이크를 켤 수 없어요. 브라우저의 마이크 권한을 확인해 주세요.')
+    } catch (e) {
+      notify(e instanceof Error ? e.message : '마이크를 켤 수 없어요. 브라우저의 마이크 권한을 확인해 주세요.')
     }
   }
   const stopMicNow = () => {
@@ -135,7 +135,8 @@ export function createActions(env: ActionEnv) {
       live.cmp = null
       return
     }
-    const t = live.time
+    // 마이크로 들어온 소리는 micLatency 만큼 늦게 도착한다 → 그만큼 앞 시간의 노트와 비교
+    const t = live.time - st.micLatencyMs / 1000
     const target = engine.noteAt(live.notes, t)
     if (frame.midi === null) {
       const last = live.trace[live.trace.length - 1]
@@ -225,18 +226,75 @@ export function createActions(env: ActionEnv) {
 
   /* ------------------------------ 분석 ------------------------------ */
 
-  const analyze = async (goStudio: boolean) => {
+  const analyze = async (goStudio: boolean, opt: { useEdits?: boolean } = {}) => {
     const st = sRef.current
     const { inputs, analysis } = st
-    if (!inputs.original && !inputs.noteFile) {
+    if (!inputs.original && !inputs.noteFile && !inputs.mr) {
       notify('먼저 원곡 파일을 넣어 주세요.')
       return
     }
     pause()
     set({ analysis: { ...analysis, status: 'running', stage: '준비 중', ratio: 0.02, error: undefined } })
-    const opts: AnalysisOptions = { sensitivity: analysis.sensitivity, splitSyllables: analysis.splitSyllables }
     const prog = (stage: string, ratio: number) => set((p) => ({ analysis: { ...p.analysis, stage, ratio } }))
+    const isReal = !!(inputs.original?.file || inputs.mr?.file)
     try {
+      if (isReal) {
+        const res = await engine.analyzeReal(
+          { original: inputs.original?.file, mr: inputs.mr?.file, vocal: inputs.vocal?.file, noteFile: inputs.noteFile?.file },
+          {
+            sensitivity: analysis.sensitivity,
+            splitSyllables: analysis.splitSyllables,
+            autofill: analysis.autofill,
+            pitchModel: analysis.pitchModel,
+            crepeModel: analysis.crepeModel,
+            useEdits: opt.useEdits ?? goStudio,
+          },
+          prog,
+        )
+        const isNew = goStudio || !st.project.real
+        playerRef.current?.seek(0)
+        live.time = 0
+        live.trace = []
+        const al = res.info.align
+        set((p) => ({
+          notes: res.notes,
+          past: [],
+          future: [],
+          selection: [],
+          notesRev: p.notesRev + 1,
+          project: {
+            ...p.project,
+            duration: res.duration,
+            bpm: 0,
+            real: true,
+            title: isNew ? stripExt((inputs.original ?? inputs.mr)!.name) : p.project.title,
+            artist: isNew ? '내 파일' : p.project.artist,
+          },
+          analysis: {
+            ...p.analysis,
+            status: 'done',
+            stage: '완료',
+            ratio: 1,
+            source: res.info.method === 'midi' || res.info.method === 'tony' || res.info.method === 'noteFile' ? 'noteFile' : inputs.vocal ? 'vocal' : 'original',
+            warnings: res.warnings,
+            info: res.info,
+          },
+          align: { status: al ? 'done' : 'idle', result: al ? { offsetMs: Math.round(al.offset * 1000), confidence: al.conf } : null },
+          level: engine.realLevelInfo(),
+          source: inputs.mr ? (isNew ? 'mr' : p.source) : 'original',
+          view: goStudio ? 'studio' : p.view,
+          railTab: goStudio ? 'analysis' : p.railTab,
+          ...(isNew ? { session: EMPTY_SESSION, sessionIsSample: false } : {}),
+        }))
+        if (isNew) {
+          recorder.reset()
+          live.noteScore.clear()
+        }
+        return
+      }
+
+      // 데모 곡 (목업 엔진)
+      const opts: AnalysisOptions = { sensitivity: analysis.sensitivity, splitSyllables: analysis.splitSyllables }
       let notes: Note[]
       let duration = st.project.duration
       let bpm = st.project.bpm
@@ -248,22 +306,15 @@ export function createActions(env: ActionEnv) {
         duration = Math.max(duration, (notes[notes.length - 1]?.start ?? 0) + 4)
         source = 'noteFile'
       } else {
-        const res = inputs.vocal
-          ? await engine.analyzeWithVocal(inputs.original?.file ?? null, inputs.vocal.file as File, opts, prog)
-          : await engine.analyzeOriginal(inputs.original?.file ?? null, opts, prog)
+        const res = inputs.vocal?.file
+          ? await engine.analyzeWithVocal(null, inputs.vocal.file, opts, prog)
+          : await engine.analyzeOriginal(null, opts, prog)
         notes = res.notes
         duration = res.duration
         bpm = res.bpm
         warnings = res.warnings
         source = res.source
       }
-      let alignResult = st.align.result
-      if (inputs.mr) {
-        prog('MR 시간 정렬', 0.95)
-        alignResult = await engine.alignMr(inputs.original?.file ?? null, inputs.mr.file)
-      } else alignResult = null
-
-      const isNew = goStudio
       playerRef.current?.seek(0)
       live.time = 0
       live.trace = []
@@ -273,26 +324,15 @@ export function createActions(env: ActionEnv) {
         future: [],
         selection: [],
         notesRev: p.notesRev + 1,
-        project: {
-          ...p.project,
-          duration,
-          bpm,
-          title: isNew && inputs.original?.file ? stripExt(inputs.original.name) : p.project.title,
-          artist: isNew && inputs.original?.file ? '내 파일' : p.project.artist,
-        },
-        analysis: { ...p.analysis, status: 'done', stage: '완료', ratio: 1, source, warnings },
-        align: { status: inputs.mr ? 'done' : 'idle', result: alignResult },
-        source: inputs.mr ? p.source : 'original',
+        project: { ...p.project, duration, bpm, real: false },
+        analysis: { ...p.analysis, status: 'done', stage: '완료', ratio: 1, source, warnings, info: null },
         view: goStudio ? 'studio' : p.view,
         railTab: goStudio ? 'analysis' : p.railTab,
-        ...(isNew ? { session: EMPTY_SESSION, sessionIsSample: false } : {}),
       }))
-      if (isNew) {
-        recorder.reset()
-        live.noteScore.clear()
-      }
     } catch (e) {
-      set((p) => ({ analysis: { ...p.analysis, status: 'error', error: e instanceof Error ? e.message : '분석에 실패했어요.' } }))
+      console.error(e)
+      set((p) => ({ analysis: { ...p.analysis, status: 'error', stage: '오류', error: e instanceof Error ? e.message : '분석에 실패했어요.' } }))
+      notify(e instanceof Error ? e.message : '분석에 실패했어요.')
     }
   }
 
@@ -300,16 +340,39 @@ export function createActions(env: ActionEnv) {
     const st = sRef.current
     if (!st.inputs.mr) return
     set({ align: { status: 'running', result: st.align.result } })
-    const res = await engine.alignMr(st.inputs.original?.file ?? null, st.inputs.mr.file)
+    if (st.project.real) {
+      await engine.realAlignMr()
+      await analyze(false, { useEdits: false })
+      return
+    }
+    const res = await engine.alignMr(null, st.inputs.mr.file)
     set({ align: { status: 'done', result: res } })
+  }
+
+  const nudgeMr = (sec: number) => {
+    const r = engine.realNudgeMr(sec)
+    if (r) set({ align: { status: 'done', result: r } })
+  }
+
+  /* 직접 편집한 노트는 원곡 파일별로 자동 저장 */
+  let saveTimer: ReturnType<typeof setTimeout> | undefined
+  const scheduleSave = () => {
+    if (!sRef.current.project.real) return
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      void engine.realSaveEdits(sRef.current.notes)
+      set((p) => (p.analysis.info && !p.analysis.info.usingEdits ? { analysis: { ...p.analysis, info: { ...p.analysis.info, usingEdits: true, method: 'edits' } } } : {}))
+    }, 600)
   }
 
   /* ------------------------------ 노트 편집 ------------------------------ */
 
   const pushHistory = (p: StudioState) => ({ past: [...p.past.slice(-49), p.notes], future: [] as Note[][] })
 
-  const commitNotes = (notes: Note[], selection?: string[]) =>
+  const commitNotes = (notes: Note[], selection?: string[]) => {
     set((p) => ({ ...pushHistory(p), notes, notesRev: p.notesRev + 1, ...(selection ? { selection } : {}) }))
+    scheduleSave()
+  }
 
   const sorted = (n: Note[]) => [...n].sort((a, b) => a.start - b.start)
 
@@ -340,6 +403,23 @@ export function createActions(env: ActionEnv) {
     setSplit: (v: boolean) => set((p) => ({ analysis: { ...p.analysis, splitSyllables: v } })),
     analyze,
     runAlign,
+    nudgeMr,
+    setAutofill: (v: boolean) => set((p) => ({ analysis: { ...p.analysis, autofill: v } })),
+    setPitchModel: (v: PitchModel) => set((p) => ({ analysis: { ...p.analysis, pitchModel: v } })),
+    setCrepeModel: (v: CrepeModel) => set((p) => ({ analysis: { ...p.analysis, crepeModel: v } })),
+    nudgeNoteFile: async (sec: number) => {
+      engine.realNudgeNoteFile(sec)
+      await analyze(false, { useEdits: false })
+    },
+    autoAlignNoteFile: async () => {
+      engine.realAutoAlignNoteFile()
+      await analyze(false, { useEdits: false })
+    },
+    discardEdits: async () => {
+      await engine.realDiscardEdits()
+      await analyze(false, { useEdits: false })
+      notify('직접 편집한 노트를 지우고 자동 분석 결과로 되돌렸어요.')
+    },
     resetToDemo: () => {
       pause()
       recorder.reset()
@@ -367,7 +447,8 @@ export function createActions(env: ActionEnv) {
       playerRef.current?.setVolume(muted ? 0 : sRef.current.volume)
       set({ muted })
     },
-    setSyncMs: (ms: number) => set({ syncMs: clamp(Math.round(ms), -400, 400) }),
+    setSyncMs: (ms: number) => set({ syncMs: clamp(Math.round(ms), -800, 800) }),
+    setMicLatency: (ms: number) => set({ micLatencyMs: clamp(Math.round(ms), 0, 300) }),
 
     /* 키 · 음역 */
     setKey: (keyShift: number) => set({ keyShift: clamp(keyShift, -7, 7) }),
@@ -388,7 +469,10 @@ export function createActions(env: ActionEnv) {
     setSelection: (ids: string[]) => set({ selection: ids }),
     beginDrag: () => set((p) => pushHistory(p)),
     dragNotes: (notes: Note[]) => set({ notes }),
-    endDrag: () => set((p) => ({ notesRev: p.notesRev + 1 })),
+    endDrag: () => {
+      set((p) => ({ notesRev: p.notesRev + 1 }))
+      scheduleSave()
+    },
     commitNotes,
     deleteSelected: () => {
       const ids = new Set(sRef.current.selection)
@@ -450,18 +534,22 @@ export function createActions(env: ActionEnv) {
         ),
       )
     },
-    undo: () =>
+    undo: () => {
       set((p) => {
         if (!p.past.length) return {}
         const prev = p.past[p.past.length - 1]
         return { notes: prev, past: p.past.slice(0, -1), future: [p.notes, ...p.future], notesRev: p.notesRev + 1, selection: [] }
-      }),
-    redo: () =>
+      })
+      scheduleSave()
+    },
+    redo: () => {
       set((p) => {
         if (!p.future.length) return {}
         const next = p.future[0]
         return { notes: next, future: p.future.slice(1), past: [...p.past, p.notes], notesRev: p.notesRev + 1, selection: [] }
-      }),
+      })
+      scheduleSave()
+    },
     exportCsv: () => {
       const csv = engine.notesToCsv(sRef.current.notes)
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })

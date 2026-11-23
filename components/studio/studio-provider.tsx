@@ -130,26 +130,42 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, [a])
 
   /* 오디오 버퍼: 소스 · 키가 바뀔 때만 합성 */
-  const total = d.shift
-  const songKey = `${s.project.title}|${s.project.duration}`
-  const bufKey = s.source === 'original' ? `${songKey}|${s.source}|${total}|${s.notesRev}` : `${songKey}|${s.source}|${total}`
+  // 반주는 '키'만큼만 옮긴다. 옥타브(±12)는 내가 한 옥타브 낮게/높게 부른다는 뜻이라 노트 표시에만 쓴다
+  const isReal = s.project.real
+  const total = isReal ? s.keyShift : d.shift
+  const songKey = `${s.project.title}|${s.project.duration}|${isReal ? 'real' : 'demo'}`
+  // 실제 곡: 키·소스·MR 오프셋이 바뀔 때만 새로 만든다 (노트 편집과는 무관)
+  const bufKey = isReal
+    ? `${songKey}|${s.source}|${total}|${s.source === 'mr' ? s.align.result?.offsetMs ?? 0 : ''}`
+    : s.source === 'original'
+      ? `${songKey}|${s.source}|${total}|${s.notesRev}`
+      : `${songKey}|${s.source}|${total}`
   useEffect(() => {
     let cancelled = false
     const p = playerRef.current
     if (!p) return
-    const delay = s.source === 'original' && s.notesRev > 0 ? 300 : 0
+    const delay = !isReal && s.source === 'original' && s.notesRev > 0 ? 300 : 0
     const timer = setTimeout(async () => {
-      let buf = bufCache.current.get(bufKey)
+      let buf = isReal ? undefined : bufCache.current.get(bufKey)
       if (!buf) {
-        setS((x) => ({ ...x, bufferStatus: 'loading' }))
+        setS((x) => ({ ...x, bufferStatus: 'loading', bufferMsg: null }))
         const st = sRef.current
-        buf = await engine.buildPitchShiftedBuffer({ notes: st.notes, duration: st.project.duration, bpm: st.project.bpm }, st.source, total)
-        bufCache.current.set(bufKey, buf)
-        if (bufCache.current.size > 8) bufCache.current.delete(bufCache.current.keys().next().value as string)
+        if (isReal) {
+          const label = total === 0 ? '' : `${total > 0 ? '+' : '−'}${Math.abs(total)}키 변환 중`
+          const b = await engine.realTrackBuffer(st.source, total, (pr, eta) => {
+            if (!cancelled) setS((x) => ({ ...x, bufferMsg: `${label} ${Math.round(pr * 100)}%${eta}` }))
+          })
+          if (!b) return
+          buf = b
+        } else {
+          buf = await engine.buildPitchShiftedBuffer({ notes: st.notes, duration: st.project.duration, bpm: st.project.bpm }, st.source, total)
+          bufCache.current.set(bufKey, buf)
+          if (bufCache.current.size > 8) bufCache.current.delete(bufCache.current.keys().next().value as string)
+        }
       }
       if (cancelled) return
       p.load(buf)
-      setS((x) => ({ ...x, bufferStatus: 'ready' }))
+      setS((x) => ({ ...x, bufferStatus: 'ready', bufferMsg: null, outputLatencyMs: p.outputLatencyMs() }))
       if (pendingPlay.current) {
         pendingPlay.current = false
         void a.play()
@@ -161,6 +177,58 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bufKey, a])
+
+  /* 내 설정 저장 · 복원 (음역, 싱크, 마이크 지연, 표기, 볼륨, 분석 설정) */
+  useEffect(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('vocallab-next') || 'null')
+      if (v)
+        setS((p) => ({
+          ...p,
+          userRange: v.userRange ?? p.userRange,
+          syncMs: v.syncMs ?? p.syncMs,
+          micLatencyMs: v.micLatencyMs ?? p.micLatencyMs,
+          notation: v.notation ?? p.notation,
+          volume: v.volume ?? p.volume,
+          analysis: { ...p.analysis, ...(v.analysis ?? {}) },
+        }))
+    } catch {
+      /* 저장소를 못 쓰는 환경 */
+    }
+  }, [])
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'vocallab-next',
+        JSON.stringify({
+          userRange: s.userRange,
+          syncMs: s.syncMs,
+          micLatencyMs: s.micLatencyMs,
+          notation: s.notation,
+          volume: s.volume,
+          analysis: { sensitivity: s.analysis.sensitivity, splitSyllables: s.analysis.splitSyllables, autofill: s.analysis.autofill, pitchModel: s.analysis.pitchModel, crepeModel: s.analysis.crepeModel },
+        }),
+      )
+    } catch {
+      /* 무시 */
+    }
+  }, [s.userRange, s.syncMs, s.micLatencyMs, s.notation, s.volume, s.analysis.sensitivity, s.analysis.splitSyllables, s.analysis.autofill, s.analysis.pitchModel, s.analysis.crepeModel])
+
+  /* 디버깅용: 브라우저 콘솔에서 window.__vocallab.notes 로 현재 노트를 볼 수 있다 */
+  useEffect(() => {
+    ;(window as unknown as { __vocallab: unknown }).__vocallab = {
+      get state() {
+        return sRef.current
+      },
+      get notes() {
+        return sRef.current.notes
+      },
+    }
+  }, [])
+
+  useEffect(() => {
+    playerRef.current?.setVolume(s.muted ? 0 : s.volume)
+  }, [s.volume, s.muted])
 
   /* 연습 기록 스냅샷 */
   useEffect(() => {

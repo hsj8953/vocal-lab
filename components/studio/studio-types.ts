@@ -1,5 +1,5 @@
 import * as engine from '@/lib/engine'
-import type { AlignResult, Compare, Note, OctaveMode, SessionStats, Tier, UserRange } from '@/lib/engine'
+import type { AlignResult, Compare, CrepeModel, Note, OctaveMode, PitchModel, RealInfo, SessionStats, Tier, UserRange } from '@/lib/engine'
 import type { Notation } from '@/lib/music'
 
 export type View = 'import' | 'studio' | 'result'
@@ -20,6 +20,8 @@ export interface ProjectMeta {
   artist: string
   duration: number
   bpm: number
+  /** 사용자 파일로 만든 곡이면 true (데모는 false) */
+  real: boolean
 }
 
 export interface AnalysisState {
@@ -31,6 +33,11 @@ export interface AnalysisState {
   error?: string
   sensitivity: number
   splitSyllables: boolean
+  /** 노트 파일의 빈 곳을 분석 결과로 채우기 */
+  autofill: boolean
+  pitchModel: PitchModel
+  crepeModel: CrepeModel
+  info: RealInfo | null
 }
 
 export interface MeasureState {
@@ -67,7 +74,12 @@ export interface StudioState {
   volume: number
   muted: boolean
   syncMs: number
+  /** 마이크 입력 지연(ms) — 내 목소리 선을 이만큼 앞으로 당긴다 */
+  micLatencyMs: number
   bufferStatus: 'loading' | 'ready'
+  bufferMsg: string | null
+  outputLatencyMs: number
+  level: { orig: number; mr: number } | null
 
   mic: { on: boolean; mode: 'live' | 'demo' | null }
   micPref: 'auto' | 'demo'
@@ -115,7 +127,7 @@ export function createInitialState(): StudioState {
     railTab: 'key',
     notation: 'scientific',
     notice: null,
-    project: { title: m.title, artist: m.artist, duration: demo.duration, bpm: m.bpm },
+    project: { title: m.title, artist: m.artist, duration: demo.duration, bpm: m.bpm, real: false },
     inputs: {
       original: { name: m.originalName, size: 5_412_000, file: null },
       mr: { name: m.mrName, size: 5_380_000, file: null },
@@ -127,8 +139,12 @@ export function createInitialState(): StudioState {
       ratio: 1,
       source: 'vocal',
       warnings: [],
-      sensitivity: 60,
+      sensitivity: 50,
       splitSyllables: true,
+      autofill: true,
+      pitchModel: 'classic',
+      crepeModel: 'small',
+      info: null,
     },
     align: { status: 'done', result: engine.DEMO_ALIGN },
     notes: demo.notes,
@@ -146,7 +162,11 @@ export function createInitialState(): StudioState {
     volume: 0.8,
     muted: false,
     syncMs: 0,
+    micLatencyMs: 60,
     bufferStatus: 'loading',
+    bufferMsg: null,
+    outputLatencyMs: 0,
+    level: null,
     mic: { on: false, mode: null },
     micPref: 'auto',
     session: sample,
