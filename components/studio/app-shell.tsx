@@ -112,8 +112,8 @@ function SyncControl() {
     <div ref={box} className="relative">
       <Button variant={s.syncMs !== 0 ? 'secondary' : 'ghost'} size="sm" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="dialog">
         <Timer />
-        <span className="hidden font-mono tabular sm:inline">{s.syncMs > 0 ? `+${s.syncMs}` : s.syncMs}ms</span>
-        <span className="sr-only sm:hidden">싱크 보정</span>
+        <span className="text-xs">싱크</span>
+        <span className="hidden font-mono text-xs tabular sm:inline">{s.syncMs > 0 ? `+${s.syncMs}` : s.syncMs}ms</span>
       </Button>
       {open ? (
         <div role="dialog" aria-label="싱크 보정" className="absolute right-0 z-50 mt-2 w-80 max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover p-4 shadow-xl">

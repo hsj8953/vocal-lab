@@ -56,19 +56,19 @@ export function ImportView() {
         {SLOTS.map((slot) => (
           <Slot key={slot.kind} slot={slot} />
         ))}
-        {!s.inputs.vocal && !s.inputs.noteFile ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-input bg-card/40 p-3.5">
-            <div className="min-w-0 flex-1">
-              <label htmlFor="sep" className="text-sm font-semibold">
-                보컬 파일이 없으면 AI로 분리하기
-              </label>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                UVR5의 Kim_Vocal_2 모델로 원곡에서 보컬과 반주를 나눠요. 처음 한 번 모델 64MB를 받고, 곡마다 몇 분 걸려요. 결과는 저장해 둬요.
-              </p>
-            </div>
-            <Switch id="sep" checked={s.analysis.separate} onCheckedChange={(v) => a.setSeparate(!!v)} />
+        <div className={`flex items-center gap-3 rounded-2xl border border-input bg-card/40 p-3.5 ${s.inputs.vocal ? 'opacity-60' : ''}`}>
+          <div className="min-w-0 flex-1">
+            <label htmlFor="sep" className="text-sm font-semibold">
+              보컬 파일이 없으면 AI로 분리하기
+            </label>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {s.inputs.vocal
+                ? '분리된 보컬 파일을 넣어서 필요 없어요.'
+                : 'UVR5의 Kim_Vocal_2 모델로 원곡에서 보컬과 반주를 나눠요. 처음 한 번 모델 64MB를 받고, 곡마다 몇 분 걸려요. 결과는 저장해 둬요.'}
+            </p>
           </div>
-        ) : null}
+          <Switch id="sep" checked={s.analysis.separate && !s.inputs.vocal} disabled={!!s.inputs.vocal} onCheckedChange={(v) => a.setSeparate(!!v)} />
+        </div>
         {s.analysis.status === 'error' ? <p className="text-sm text-miss">{s.analysis.error}</p> : null}
         <Button size="lg" className="mt-1 h-12 text-sm" disabled={!canStart || running} onClick={() => void a.analyze(true)}>
           {running ? <Loader2 className="animate-spin" /> : null}

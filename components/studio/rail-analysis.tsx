@@ -46,6 +46,8 @@ export function RailAnalysis() {
         ))}
       </Section>
 
+      <SeparationSection />
+
       <Section title="감지 설정">
         <div className="flex items-center justify-between text-xs">
           <label htmlFor="sens" className="font-medium">
@@ -74,15 +76,6 @@ export function RailAnalysis() {
           <Switch id="split" checked={an.splitSyllables} onCheckedChange={(v) => a.setSplit(!!v)} />
         </div>
         {s.project.real && !s.inputs.vocal && !an.info?.separated ? <p className="mt-1 text-[11px] text-muted-foreground">음절 나누기는 분리된 보컬(파일 또는 AI 분리)이 있어야 동작해요.</p> : null}
-        {!s.inputs.vocal ? (
-          <div className="mt-3 flex items-center justify-between gap-3">
-            <label htmlFor="sep2" className="text-xs">
-              <span className="font-medium">AI 보컬 분리 (UVR5 Kim_Vocal_2)</span>
-              <span className="block text-[11px] text-muted-foreground">보컬 파일이 없을 때 원곡에서 보컬과 반주를 나눠서 분석해요</span>
-            </label>
-            <Switch id="sep2" checked={an.separate} onCheckedChange={(v) => a.setSeparate(!!v)} />
-          </div>
-        ) : null}
         <div className="mt-4">
           <div className="flex items-center justify-between text-xs">
             <span className="font-medium">음 높이 분석기</span>
@@ -360,6 +353,40 @@ function LyricsSection() {
           </Button>
         </>
       )}
+    </Section>
+  )
+}
+
+function SeparationSection() {
+  const { s, a } = useStudio()
+  const an = s.analysis
+  const running = an.status === 'running'
+  const sep = an.info?.separated
+  const hasVocalFile = !!s.inputs.vocal
+  const demo = !s.project.real
+  let status: string
+  if (demo) status = '데모 곡에서는 쓰지 않아요. 내 곡을 불러오면 쓸 수 있어요.'
+  else if (hasVocalFile) status = `직접 넣은 보컬 파일(${s.inputs.vocal!.name})을 쓰고 있어서 AI 분리는 필요 없어요.`
+  else if (sep) status = `분리 완료 · 이 보컬로 노트를 찍고, 반주(원곡 − 보컬)를 MR로 쓸 수 있어요.${sep.cached ? ' (저장된 결과)' : sep.seconds ? ` ${Math.round(sep.seconds)}초 걸림 · ${sep.ep === 'webgpu' ? '그래픽카드' : 'CPU'}` : ''}`
+  else if (an.separate) status = '켜져 있지만 아직 분리하지 않았어요. 아래 버튼을 누르면 분리한 뒤 다시 분석해요.'
+  else status = '꺼져 있어요. 켜고 다시 분석하면 원곡에서 보컬과 반주를 나눠요.'
+  return (
+    <Section title="AI 보컬 분리" hint="UVR5 · Kim_Vocal_2">
+      <div className="flex items-center justify-between gap-3">
+        <label htmlFor="sep2" className="text-xs">
+          <span className="font-medium">원곡에서 보컬·반주 나누기</span>
+          <span className="block text-[11px] text-muted-foreground">보컬 파일이 없을 때 노트를 정확하게 찍고, 가이드 보컬과 MR을 만들어요</span>
+        </label>
+        <Switch id="sep2" checked={an.separate && !hasVocalFile && !demo} disabled={hasVocalFile || demo} onCheckedChange={(v) => a.setSeparate(!!v)} />
+      </div>
+      <p className={`mt-2 rounded-lg p-2.5 text-[11px] leading-relaxed ${sep ? 'bg-voice/10 text-voice' : 'bg-muted/50 text-muted-foreground'}`}>{status}</p>
+      {!demo && !hasVocalFile && an.separate && !sep ? (
+        <Button className="mt-2 w-full" disabled={running} onClick={() => void a.analyze(false)}>
+          {running ? <Loader2 className="animate-spin" /> : null}
+          {running ? an.stage : '보컬 분리하고 다시 분석'}
+        </Button>
+      ) : null}
+      {!demo && !hasVocalFile && !sep ? <p className="mt-2 text-[11px] text-muted-foreground">처음 한 번 모델 64MB를 받고, 곡마다 몇 분 걸려요. 결과는 저장해 둬서 같은 곡은 바로 끝나요.</p> : null}
     </Section>
   )
 }

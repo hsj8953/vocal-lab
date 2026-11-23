@@ -1,10 +1,10 @@
 'use client'
 
-import { Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX } from 'lucide-react'
+import { Pause, Play, RotateCcw, RotateCw } from 'lucide-react'
 import { useRef } from 'react'
 import { Button } from '@/components/ui/button'
-import { Slider } from '@/components/ui/slider'
 import { fmtTime, noteName } from '@/lib/music'
+import { Mixer } from './mixer'
 import { OverviewCanvas } from './overview-canvas'
 import { useFrame, useStudio } from './studio-provider'
 import { Seg } from './ui-bits'
@@ -65,52 +65,10 @@ export function Transport() {
           ].filter((o) => hasMr || o.value !== 'mr') as { value: 'mr' | 'original'; label: string }[]}
         />
 
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="ghost" size="icon-sm" onClick={a.toggleMute} aria-label={s.muted ? '음소거 해제' : '음소거'}>
-            {s.muted || s.volume === 0 ? <VolumeX /> : <Volume2 />}
-          </Button>
-          <div className="w-24 shrink-0">
-            <Slider
-              aria-label="볼륨"
-              className="w-full"
-              min={0}
-              max={100}
-              value={[s.muted ? 0 : Math.round(s.volume * 100)]}
-              onValueChange={(v) => {
-                const n = Array.isArray(v) ? v[0] : v
-                if (s.muted) a.toggleMute()
-                a.setVolume(n / 100)
-              }}
-            />
-          </div>
-        </div>
-
-        {s.source === 'mr' && s.guideAvailable ? (
-          <div className="flex items-center gap-2" title="반주에 원곡 보컬을 섞어서 들어요. 익숙해지면 줄여 보세요.">
-            <span className="text-xs whitespace-nowrap text-muted-foreground">가이드 보컬</span>
-            <div className="w-24 shrink-0">
-              <Slider
-                aria-label="가이드 보컬 볼륨"
-                className="w-full"
-                min={0}
-                max={100}
-                value={[Math.round(s.guideVolume * 100)]}
-                onValueChange={(v) => a.setGuideVolume((Array.isArray(v) ? v[0] : v) / 100)}
-              />
-            </div>
-            <span className="w-9 font-mono text-[11px] whitespace-nowrap text-muted-foreground tabular">{Math.round(s.guideVolume * 100)}%</span>
-          </div>
-        ) : null}
+        <Mixer />
 
         <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
           {loading ? <span role="status">{s.bufferMsg ?? '음원 준비 중…'}</span> : null}
-          {s.level ? (
-            <span className="hidden xl:inline" title="원곡과 MR의 음량 차이를 자동으로 맞췄어요">
-              음량 맞춤 · 원곡 {s.level.orig >= 0 ? '+' : '−'}
-              {Math.abs(s.level.orig).toFixed(1)}dB / MR {s.level.mr >= 0 ? '+' : '−'}
-              {Math.abs(s.level.mr).toFixed(1)}dB
-            </span>
-          ) : null}
           <span className="tabular">
             키 <b className="font-mono text-foreground">{s.keyShift > 0 ? `+${s.keyShift}` : s.keyShift}</b>
             {d.octave ? <b className="ml-1 rounded bg-muted px-1 font-mono text-[11px] text-foreground" title={d.octave < 0 ? '원곡보다 한 옥타브 낮게 불러요' : '원곡보다 한 옥타브 높게 불러요'}>{d.octave < 0 ? '8vb' : '8va'}</b> : null}
