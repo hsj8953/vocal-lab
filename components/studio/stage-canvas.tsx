@@ -168,6 +168,7 @@ export function StageCanvas() {
     /* 노트 */
     ctx.font = `700 12px ${SANS}`
     ctx.textBaseline = 'middle'
+    const labelRow = new Map<number, { right: number; text: string }>()
     for (const n of notes) {
       const x1 = x(n.start)
       const nw = n.dur * pxs
@@ -208,6 +209,26 @@ export function StageCanvas() {
         ctx.fillStyle = selected ? PAL.text : 'oklch(0.2 0.03 252 / 0.35)'
         ctx.fillRect(x1 + 2, yc - noteH / 4, 2, noteH / 2)
         ctx.fillRect(x1 + nw - 4, yc - noteH / 4, 2, noteH / 2)
+      }
+
+      /* 음 이름: 노트 안에 들어가면 안쪽, 아니면 노트 위 (가사가 있으면 항상 위) */
+      const isPeak = peakWorthy && n.id === peak!.id
+      if (!isPeak) {
+        const label = noteName(shown, live.notation)
+        ctx.font = `700 11px ${mono}`
+        const lw = ctx.measureText(label).width
+        const inside = !n.lyric && nw >= lw + 10 && noteH >= 14
+        const lx = inside ? x1 + nw / 2 - lw / 2 : x1
+        const ly = inside ? yc + 0.5 : yc - noteH / 2 - 7
+        const prevLab = labelRow.get(Math.round(ly))
+        // 같은 줄에서 앞 글자와 겹치고 같은 음이면 생략 (짧은 노트가 이어질 때 글자가 뭉개지지 않게)
+        if (!(prevLab && lx < prevLab.right + 2 && prevLab.text === label)) {
+          ctx.textAlign = 'left'
+          ctx.fillStyle = inside ? (isPast && !sc ? PAL.textDim : PAL.ink) : isNow ? PAL.text : outside ? PAL.miss : isPast ? PAL.textFaint : PAL.textDim
+          ctx.fillText(label, lx, ly)
+          labelRow.set(Math.round(ly), { right: lx + lw, text: label })
+        }
+        ctx.font = `700 12px ${SANS}`
       }
 
       if (n.lyric) {

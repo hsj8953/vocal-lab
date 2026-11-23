@@ -28,7 +28,8 @@ export function AppShell() {
   return (
     <div className="flex min-h-dvh flex-col lg:h-dvh lg:overflow-hidden">
       <Header />
-      <main className="flex min-h-0 flex-1 flex-col">
+      {/* 넓은 화면(lg 이상)에서는 전체 높이를 화면에 고정하므로, 스튜디오가 아닌 화면은 main 안에서 스크롤한다 */}
+      <main className={cn('flex min-h-0 flex-1 flex-col', s.view !== 'studio' && 'lg:overflow-y-auto')}>
         {s.view === 'import' ? <ImportView /> : null}
         {s.view === 'studio' ? <StudioView /> : null}
         {s.view === 'result' ? <ResultView /> : null}
