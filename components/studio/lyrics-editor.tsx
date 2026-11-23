@@ -1,6 +1,6 @@
 'use client'
 
-import { Crosshair, Minus, Pause, Play, Plus, Trash2, X } from 'lucide-react'
+import { ClipboardPaste, Crosshair, Minus, Pause, Play, Plus, Trash2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
@@ -34,6 +34,7 @@ export function LyricsEditor({ onClose }: { onClose: () => void }) {
   const [cur, setCur] = useState(-1)
   const [follow, setFollow] = useState(true)
   const [now, setNow] = useState(0)
+  const [pasting, setPasting] = useState(false)
   const list = useRef<HTMLOListElement>(null)
 
   // 지금 재생 중인 줄 (0.15초마다 확인 — 매 프레임 다시 그리지 않도록)
@@ -76,6 +77,9 @@ export function LyricsEditor({ onClose }: { onClose: () => void }) {
             {s.playing ? '일시정지' : '재생'}
           </Button>
           <span className="font-mono text-sm tabular text-muted-foreground">{fmt(now)}</span>
+          <Button size="sm" variant={pasting ? 'secondary' : 'outline'} onClick={() => setPasting((v) => !v)}>
+            <ClipboardPaste /> 독음 한꺼번에 붙여넣기
+          </Button>
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
             재생 줄 따라가기
@@ -88,6 +92,8 @@ export function LyricsEditor({ onClose }: { onClose: () => void }) {
           재생하면서 지금 줄이 초록색으로 표시돼요. 줄의 <b className="text-foreground">▶</b>는 그 줄 조금 앞부터 듣기, <b className="text-foreground">📍</b>는 지금 재생 위치를 그 줄의 시작으로 찍기예요. 독음 칸에 적은 글자가 화면과 노트 붙이기에 쓰여요.
           {off ? ` (전체 타이밍 보정 ${off > 0 ? '+' : ''}${off.toFixed(1)}초가 함께 적용돼요)` : ''}
         </p>
+
+        {pasting && <PastePanel count={ly.lines.length} onDone={() => setPasting(false)} />}
 
         {/* 줄 목록 */}
         <ol ref={list} className="scroll-thin flex-1 space-y-1.5 overflow-y-auto p-3">
@@ -139,7 +145,13 @@ export function LyricsEditor({ onClose }: { onClose: () => void }) {
                 </div>
                 <div className="mt-2 grid gap-1.5 pl-7">
                   <TextInput value={l.text} placeholder="원문 (비워 두면 간주)" onCommit={(v) => a.updateLyricLine(i, { text: v })} className="text-muted-foreground" />
-                  <TextInput value={l.reading ?? ''} placeholder="독음 (예: 로스토완노 고오코쿠)" onCommit={(v) => a.updateLyricLine(i, { reading: v || undefined })} className="font-semibold" />
+                  <TextInput
+                    value={l.reading ?? ''}
+                    placeholder="독음 (여러 줄을 붙여넣으면 이 줄부터 차례로 들어가요)"
+                    onCommit={(v) => a.updateLyricLine(i, { reading: v || undefined })}
+                    onPasteLines={(t) => a.pasteReading(t, i)}
+                    className="font-semibold"
+                  />
                 </div>
               </li>
             )
@@ -170,6 +182,58 @@ export function LyricsEditor({ onClose }: { onClose: () => void }) {
   )
 }
 
+/** 독음을 줄 단위로 한꺼번에 붙여넣기 — 시작 줄을 고를 수 있다 */
+function PastePanel({ count, onDone }: { count: number; onDone: () => void }) {
+  const { a } = useStudio()
+  const [text, setText] = useState('')
+  const [from, setFrom] = useState(1)
+  const n = text.split(/\r?\n/).filter((x) => x.trim()).length
+  return (
+    <div className="border-b border-border bg-muted/20 px-4 py-3">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        독음을 한 줄씩 붙여넣으면 원문이 있는 줄의 독음 칸에 순서대로 들어가요(원문과 시간은 그대로, 간주 줄은 건너뜀). 이미 적힌 독음은 덮어써요.
+      </p>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={5}
+        autoFocus
+        placeholder={'로스토완노 고오코쿠\n...'}
+        aria-label="독음 붙여넣기"
+        className="mt-2 w-full resize-y rounded-md border border-input bg-background/60 p-2 text-sm leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <input
+            type="number"
+            min={1}
+            max={count}
+            value={from}
+            onChange={(e) => setFrom(Math.min(count, Math.max(1, Number(e.target.value) || 1)))}
+            className="h-8 w-16 rounded-md border border-input bg-background/60 px-2 text-center font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          번 줄부터
+        </label>
+        <span className="text-xs text-muted-foreground">{n ? `${n}줄` : ''}</span>
+        <Button size="sm" variant="ghost" className="ml-auto" onClick={onDone}>
+          취소
+        </Button>
+        <Button
+          size="sm"
+          disabled={!n}
+          onClick={() => {
+            a.pasteReading(text, from - 1)
+            setText('')
+            onDone()
+          }}
+        >
+          독음 넣기
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 function TimeInput({ value, onChange }: { value: number; onChange: (t: number) => void }) {
   const [v, setV] = useState(fmt(value))
   useEffect(() => setV(fmt(value)), [value])
@@ -191,7 +255,19 @@ function TimeInput({ value, onChange }: { value: number; onChange: (t: number) =
 }
 
 /** 입력하는 동안은 로컬로 두고, 칸을 벗어나거나 Enter를 누르면 저장 */
-function TextInput({ value, placeholder, onCommit, className }: { value: string; placeholder: string; onCommit: (v: string) => void; className?: string }) {
+function TextInput({
+  value,
+  placeholder,
+  onCommit,
+  onPasteLines,
+  className,
+}: {
+  value: string
+  placeholder: string
+  onCommit: (v: string) => void
+  onPasteLines?: (text: string) => void
+  className?: string
+}) {
   const [v, setV] = useState(value)
   useEffect(() => setV(value), [value])
   return (
@@ -199,6 +275,13 @@ function TextInput({ value, placeholder, onCommit, className }: { value: string;
       value={v}
       placeholder={placeholder}
       onChange={(e) => setV(e.target.value)}
+      onPaste={(e) => {
+        if (!onPasteLines) return
+        const t = e.clipboardData.getData('text')
+        if (t.split(/\r?\n/).filter((x) => x.trim()).length < 2) return
+        e.preventDefault()
+        onPasteLines(t)
+      }}
       onBlur={() => v.trim() !== value && onCommit(v.trim())}
       onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
       className={cn('h-8 w-full rounded-md border border-input bg-background/60 px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}

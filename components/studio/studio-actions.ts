@@ -461,8 +461,8 @@ export function createActions(env: ActionEnv) {
     removeLyricLine: (i: number) =>
       set((p) => (p.lyrics ? { lyrics: { ...p.lyrics, lines: p.lyrics.lines.filter((_, k) => k !== i) } } : {})),
     newLyrics: () => set({ lyrics: { name: '직접 입력한 가사', lines: [{ t: 0, text: '' }], offset: 0 } }),
-    pasteReading: (text: string) => {
-      if (/\[\d{1,3}:\d{1,2}/.test(text)) {
+    pasteReading: (text: string, from = 0) => {
+      if (!from && /\[\d{1,3}:\d{1,2}/.test(text)) {
         setLyricsText('붙여넣은 가사', text)
         return
       }
@@ -471,7 +471,7 @@ export function createActions(env: ActionEnv) {
         notify('먼저 시간이 있는 가사(LRCLIB 등)를 불러와 주세요. 독음은 그 줄 시간에 맞춰 들어가요.')
         return
       }
-      const r = replaceLineTexts(cur.lines, text)
+      const r = replaceLineTexts(cur.lines, text, from)
       if (!r.given) return
       set({ lyrics: { ...cur, lines: r.lines } })
       notify(r.given === r.timed ? `독음 ${r.given}줄을 줄 시간에 맞춰 넣었어요.` : `가사 줄은 ${r.timed}줄, 붙여넣은 독음은 ${r.given}줄이에요. 앞에서부터 순서대로 넣었으니 어긋난 곳을 확인해 주세요.`)

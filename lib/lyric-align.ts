@@ -146,15 +146,15 @@ export function attachLyrics(notes: Note[], lines: LyricLine[], offset: number):
  * 독음 붙여넣기: 시간이 있는 원래 가사(예: 일본어)의 줄에 한국어 독음을 차례로 넣는다 (원문은 그대로 둔다).
  * 빈 줄(간주)은 건너뛰고, 가사가 있는 줄끼리 순서대로 짝짓는다.
  */
-export function replaceLineTexts(lines: LyricLine[], pasted: string): { lines: LyricLine[]; timed: number; given: number } {
+export function replaceLineTexts(lines: LyricLine[], pasted: string, from = 0): { lines: LyricLine[]; timed: number; given: number } {
   const given = pasted
     .split(/\r?\n/)
     .map((x) => x.trim())
     .filter(Boolean)
   let k = 0
-  const timed = lines.filter((l) => l.text).length
-  const out = lines.map((l) => {
-    if (!l.text) return l
+  const timed = lines.filter((l, i) => i >= from && l.text).length
+  const out = lines.map((l, i) => {
+    if (i < from || !l.text) return l
     const r = given[k++]
     return r === undefined ? l : { ...l, reading: r }
   })
