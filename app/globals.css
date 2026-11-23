@@ -1,0 +1,140 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, 'SF Mono', 'D2Coding', Menlo, Consolas, 'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', monospace;
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --color-stage: var(--stage);
+  --color-voice: var(--voice);
+  --color-voice-foreground: var(--voice-foreground);
+  --color-caution: var(--caution);
+  --color-miss: var(--miss);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+}
+
+/*
+  VOCAL·LAB palette
+  neutrals: 밤 남색 (stage / background / panel) + 아이스 화이트 (텍스트, 목표 음)
+  voice  : 시안 — 내 목소리, ±50c 이내
+  caution: 앰버 — ±100c, 곧 나올 최고음
+  miss   : 코랄 — 벗어남, 내 음역 밖
+*/
+:root {
+  color-scheme: dark;
+  --background: oklch(0.205 0.032 252);
+  --foreground: oklch(0.955 0.012 240);
+  --stage: oklch(0.158 0.03 254);
+  --card: oklch(0.245 0.034 252);
+  --card-foreground: oklch(0.955 0.012 240);
+  --popover: oklch(0.275 0.036 252);
+  --popover-foreground: oklch(0.955 0.012 240);
+  --primary: oklch(0.955 0.012 240);
+  --primary-foreground: oklch(0.2 0.03 252);
+  --secondary: oklch(0.3 0.036 252);
+  --secondary-foreground: oklch(0.955 0.012 240);
+  --muted: oklch(0.28 0.034 252);
+  --muted-foreground: oklch(0.74 0.028 248);
+  --accent: oklch(0.33 0.04 250);
+  --accent-foreground: oklch(0.955 0.012 240);
+  --destructive: oklch(0.7 0.17 25);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.8 0.12 205);
+  --voice: oklch(0.82 0.125 205);
+  --voice-foreground: oklch(0.2 0.04 230);
+  --caution: oklch(0.83 0.15 80);
+  --miss: oklch(0.7 0.17 25);
+  --radius: 0.75rem;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply bg-background;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-feature-settings: 'tnum' 1;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(1 0 0 / 18%) transparent;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise-in {
+  animation: rise-in 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 oklch(0.82 0.125 205 / 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 8px oklch(0.82 0.125 205 / 0);
+  }
+}
+
+.rec-pulse {
+  animation: rec-pulse 1.6s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise-in,
+  .rec-pulse {
+    animation: none;
+  }
+}

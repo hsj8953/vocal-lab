@@ -1,0 +1,1152 @@
+/**
+ * VOCAL·LAB — 목업 엔진
+ *
+ * UI는 이 파일의 공개 인터페이스만 사용한다. 실제 엔진(보컬 분석 / 정렬 / 피치 시프트 / 마이크 피치 검출)으로
+ * 교체할 때는 같은 시그니처를 유지하면 된다.
+ *
+ *  분석     analyzeOriginal · analyzeWithVocal · alignMr · parseNoteFile
+ *  오디오   buildPitchShiftedBuffer · createPlayer
+ *  마이크   startMic · stopMic · onPitch
+ *  순수 로직 summarizeNotes · recommendKey · compareFrame · createRecorder · 노트 편집 헬퍼
+ */
+
+import { hzToMidi, midiToHz } from './music'
+
+/* ------------------------------------------------------------------ */
+/* 타입                                                                 */
+/* ------------------------------------------------------------------ */
+
+export interface Note {
+  id: string
+  /** 시작(초) */
+  start: number
+  /** 길이(초) */
+  dur: number
+  /** MIDI 번호 (소수 허용, 원곡 키 기준) */
+  midi: number
+  lyric?: string
+}
+
+export interface AnalysisOptions {
+  /** 보컬 감지 감도 0~100 */
+  sensitivity: number
+  /** 가사 음절마다 노트를 나눌지 */
+  splitSyllables: boolean
+}
+
+export type ProgressFn = (stage: string, ratio: number) => void
+
+export interface AnalysisResult {
+  notes: Note[]
+  duration: number
+  bpm: number
+  source: 'original' | 'vocal' | 'noteFile'
+  warnings: string[]
+}
+
+export interface AlignResult {
+  /** MR이 원곡보다 늦게 시작하면 +, 단위 ms */
+  offsetMs: number
+  /** 0~1 */
+  confidence: number
+}
+
+export interface PitchPoint {
+  midi: number
+  time: number
+  id: string
+}
+
+export interface RangeSummary {
+  low: PitchPoint
+  high: PitchPoint
+  span: number
+  coreLow: number
+  coreHigh: number
+  noteCount: number
+  totalSec: number
+  histogram: { midi: number; sec: number }[]
+}
+
+export type Tier = 'great' | 'ok' | 'off'
+export const TIER_CENTS = { great: 50, ok: 100 } as const
+
+export interface Compare {
+  target: number
+  user: number
+  /** 옥타브를 접은 뒤의 차이(센트). +면 높게 부름 */
+  cents: number
+  tier: Tier
+  /** 한 옥타브 이상 다르게 부르는 경우 (−1: 한 옥타브 낮게) */
+  octaveOff: number
+}
+
+export interface PitchFrame {
+  time: number
+  hz: number | null
+  midi: number | null
+  clarity: number
+  level: number
+}
+
+export interface DemoSinger {
+  /** 지금 불러야 할 음 (없으면 쉬는 구간) */
+  getTargetMidi: () => number | null
+  /** 시뮬레이션 가수의 실제 음역 */
+  ability?: { low: number; high: number }
+}
+
+export interface MicOptions {
+  mode?: 'auto' | 'live' | 'demo'
+  demo?: DemoSinger
+}
+
+export interface MicResult {
+  mode: 'live' | 'demo'
+  fellBack: boolean
+  reason?: string
+}
+
+/* ------------------------------------------------------------------ */
+/* 데모 곡 (목업 데이터)                                                   */
+/* ------------------------------------------------------------------ */
+
+export const DEMO_META = {
+  title: '별빛 아래서',
+  artist: 'VOCAL·LAB 데모 트랙',
+  originalName: 'starlight_demo.mp3',
+  mrName: 'starlight_demo_MR.mp3',
+  vocalName: 'starlight_demo_vocal.wav',
+  bpm: 92,
+}
+
+const BEAT = 60 / DEMO_META.bpm
+
+type Tok = [dur: number, midi: number, syl?: string]
+
+const fit = (toks: Tok[], total = 8): Tok[] => {
+  const sum = toks.reduce((a, t) => a + t[0], 0)
+  if (Math.abs(sum - total) < 1e-6) return toks
+  if (sum > total) return toks.map((t) => [t[0] * (total / sum), t[1], t[2]] as Tok)
+  return [...toks, [total - sum, 0] as Tok]
+}
+
+const SECTIONS: Tok[][] = [
+  [[8, 0]],
+  // verse A
+  [[0.5, 0], [0.5, 60, '조'], [0.5, 60, '용'], [1, 62, '한'], [0.5, 60, '밤'], [0.5, 57, '하'], [1, 60, '늘'], [1, 64, '에'], [1.5, 62, '별'], [1, 60, '이']],
+  [[0.5, 0], [0.5, 60, '내'], [1, 64, '어'], [0.5, 62, '깨'], [0.5, 60, '위'], [1, 62, '로'], [0.5, 64, '쏟'], [0.5, 64, '아'], [1, 65, '져'], [2, 64, '와']],
+  [[0.5, 0], [0.5, 57, '숨'], [0.5, 57, '죽'], [1, 55, '인'], [0.5, 57, '거'], [0.5, 60, '리'], [1, 59, '에'], [0.5, 57, '혼'], [0.5, 55, '자'], [2.5, 52, '서']],
+  [[0.5, 0], [0.5, 55, '걸'], [0.5, 57, '음'], [1, 60, '을'], [0.5, 60, '멈'], [0.5, 60, '추'], [1, 62, '고'], [0.5, 64, '너'], [0.5, 62, '를'], [1, 60, '불'], [1.5, 60, '러']],
+  // pre-chorus
+  [[0.5, 0], [0.5, 62, '한'], [0.5, 64, '걸'], [1, 65, '음'], [0.5, 67, '더'], [0.5, 65, '가'], [1, 64, '까'], [1, 62, '이'], [1, 64, '와'], [1.5, 65, '줘']],
+  [[0.5, 0], [0.5, 64, '닿'], [0.5, 65, '을'], [1, 67, '듯'], [0.5, 65, '말'], [0.5, 67, '듯'], [1, 69, '한'], [0.5, 67, '그'], [0.5, 69, '순'], [2.5, 67, '간']],
+  // chorus
+  [[0.5, 0], [0.5, 67, '별'], [0.5, 67, '빛'], [1, 69, '아'], [0.5, 67, '래'], [0.5, 65, '서'], [1, 67, '우'], [0.5, 64, '린'], [0.5, 65, '하'], [1, 67, '나'], [1.5, 64, '가']],
+  [[0.5, 0], [0.5, 69, '눈'], [0.5, 69, '부'], [1, 69, '신'], [0.5, 67, '이'], [0.5, 65, '밤'], [1, 67, '을'], [0.5, 69, '노'], [0.5, 67, '래'], [2.5, 64, '해']],
+  [[0.5, 0], [0.5, 65, '잡'], [0.5, 67, '은'], [1, 69, '손'], [0.5, 69, '놓'], [0.5, 69, '지'], [1, 67, '않'], [0.5, 65, '을'], [3, 67, '게']],
+  [[0.5, 0], [0.5, 67, '영'], [0.5, 69, '원'], [1.5, 69, '히'], [0.5, 67, '빛'], [0.5, 69, '나'], [1, 69, '는'], [0.5, 67, '순'], [2.5, 65, '간']],
+  // interlude
+  [[8, 0]],
+  // bridge
+  [[0.5, 0], [0.5, 57, '차'], [0.5, 60, '가'], [1, 62, '운'], [0.5, 64, '바'], [0.5, 62, '람'], [1, 60, '이'], [0.5, 60, '불'], [0.5, 60, '어'], [1, 57, '와'], [1.5, 55, '도']],
+  [[0.5, 0], [0.5, 60, '네'], [0.5, 62, '가'], [1, 64, '있'], [0.5, 65, '어'], [0.5, 67, '서'], [1, 65, '괜'], [0.5, 64, '찮'], [0.5, 62, '아'], [2.5, 64, '요']],
+  // last chorus — 최고음
+  [[0.5, 0], [0.5, 67, '별'], [0.5, 67, '빛'], [1, 69, '아'], [0.5, 69, '래'], [0.5, 67, '서'], [1, 69, '우'], [0.5, 71, '린'], [0.5, 69, '하'], [2.5, 71, '나']],
+  [[0.5, 0], [0.5, 69, '영'], [0.5, 69, '원'], [1, 67, '히'], [0.5, 65, '함'], [0.5, 64, '께'], [1, 65, '할'], [0.5, 67, '게'], [3, 64, '요']],
+  [[4, 0]],
+]
+
+const FIT_EXEMPT = new Set([0, 11, 16])
+
+interface RawNote {
+  start: number
+  dur: number
+  midi: number
+  lyric: string
+  conf: number
+  ghost?: boolean
+  octaveError?: boolean
+}
+
+/** [beat, durBeats, midi, conf] — 반주 잔향·숨소리·화음이 보컬로 잘못 잡힌 후보 */
+const GHOSTS: [number, number, number, number][] = [
+  [2, 0.6, 62, 0.22],
+  [5.5, 0.5, 67, 0.16],
+  [16, 0.4, 57, 0.31],
+  [32.2, 0.4, 60, 0.27],
+  [90, 0.8, 69, 0.2],
+  [91.5, 0.5, 79, 0.15],
+  [93.5, 0.6, 60, 0.12],
+  [128.5, 0.5, 71, 0.24],
+]
+
+const hash = (i: number) => {
+  const x = Math.sin(i * 91.7 + 3.1) * 43758.5453
+  return x - Math.floor(x)
+}
+
+let rawCache: { notes: RawNote[]; duration: number } | null = null
+
+function buildRaw() {
+  if (rawCache) return rawCache
+  const notes: RawNote[] = []
+  let beat = 0
+  let idx = 0
+  SECTIONS.forEach((sec, si) => {
+    const toks = FIT_EXEMPT.has(si) ? sec : fit(sec)
+    for (const [d, m, syl] of toks) {
+      if (m > 0) {
+        const lyric = syl ?? ''
+        notes.push({
+          start: beat * BEAT,
+          dur: Math.max(0.08, d * BEAT - 0.025),
+          midi: m,
+          lyric,
+          conf: 0.5 + 0.49 * hash(idx++),
+          octaveError: (lyric === '인' && m === 55) || (lyric === '혼' && m === 57),
+        })
+      }
+      beat += d
+    }
+  })
+  for (const [b, d, m, c] of GHOSTS) {
+    notes.push({ start: b * BEAT, dur: d * BEAT, midi: m, lyric: '', conf: c, ghost: true })
+  }
+  notes.sort((a, b) => a.start - b.start)
+  rawCache = { notes, duration: beat * BEAT }
+  return rawCache
+}
+
+let uidCounter = 0
+export const uid = () => `n${(++uidCounter).toString(36)}`
+
+function materialize(mode: 'original' | 'vocal', opts: AnalysisOptions): AnalysisResult {
+  const { notes: raw, duration } = buildRaw()
+  const thr = 0.97 * (1 - opts.sensitivity / 100) + 0.02
+  const warnings: string[] = []
+
+  let picked = raw
+    .map((n) => {
+      const c = mode === 'vocal' ? (n.ghost ? n.conf * 0.35 : Math.min(1, n.conf * 1.15 + 0.05)) : n.conf
+      return { n, c }
+    })
+    .filter(({ c }) => c >= thr)
+    .map(({ n }) => ({
+      id: uid(),
+      start: n.start,
+      dur: n.dur,
+      midi: mode === 'original' && n.octaveError ? n.midi + 12 : n.midi,
+      lyric: n.lyric,
+    })) as Note[]
+
+  if (!opts.splitSyllables) {
+    const merged: Note[] = []
+    for (const n of picked) {
+      const prev = merged[merged.length - 1]
+      if (prev && Math.round(prev.midi) === Math.round(n.midi) && n.start - (prev.start + prev.dur) < 0.1) {
+        prev.dur = n.start + n.dur - prev.start
+        prev.lyric = (prev.lyric ?? '') + (n.lyric ?? '')
+      } else merged.push({ ...n })
+    }
+    picked = merged
+  }
+
+  if (mode === 'original') {
+    const errs = raw.filter((n) => n.octaveError).length
+    warnings.push(`원곡 단독 분석은 반주 간섭으로 옥타브가 튀는 구간이 있을 수 있어요(의심 ${errs}곳). 보컬 분리 파일을 함께 넣으면 정확도가 올라갑니다.`)
+  }
+  if (opts.sensitivity >= 85) warnings.push('감도가 높아 반주·숨소리가 노트로 잡힐 수 있어요. 최고음이 비정상적으로 높다면 감도를 낮춰 보세요.')
+  if (picked.length === 0) warnings.push('감지된 노트가 없습니다. 감도를 올려 다시 분석해 보세요.')
+
+  return { notes: picked, duration, bpm: DEMO_META.bpm, source: mode, warnings }
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+async function runStages(stages: [string, number][], onProgress?: ProgressFn) {
+  for (const [label, ratio] of stages) {
+    onProgress?.(label, ratio)
+    await sleep(380)
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 분석 API                                                              */
+/* ------------------------------------------------------------------ */
+
+export async function analyzeOriginal(_original: File | null, opts: AnalysisOptions, onProgress?: ProgressFn): Promise<AnalysisResult> {
+  await runStages(
+    [
+      ['오디오 디코딩', 0.12],
+      ['보컬 구간 감지', 0.38],
+      ['피치 트래킹', 0.66],
+      ['노트 분할', 0.9],
+    ],
+    onProgress,
+  )
+  onProgress?.('완료', 1)
+  return materialize('original', opts)
+}
+
+export async function analyzeWithVocal(_original: File | null, _vocal: File, opts: AnalysisOptions, onProgress?: ProgressFn): Promise<AnalysisResult> {
+  await runStages(
+    [
+      ['보컬 파일 디코딩', 0.18],
+      ['피치 트래킹', 0.55],
+      ['노트 분할', 0.88],
+    ],
+    onProgress,
+  )
+  onProgress?.('완료', 1)
+  return materialize('vocal', opts)
+}
+
+let alignAttempt = 0
+export async function alignMr(_original: File | null, _mr: File | null, onProgress?: ProgressFn): Promise<AlignResult> {
+  onProgress?.('MR 시간 정렬', 0.3)
+  await sleep(700)
+  const a = alignAttempt++
+  return {
+    offsetMs: Math.round(124 + 14 * Math.sin(a * 1.7)),
+    confidence: Math.round((0.84 + 0.09 * Math.cos(a * 2.3)) * 100) / 100,
+  }
+}
+
+export const DEMO_ALIGN: AlignResult = { offsetMs: 124, confidence: 0.88 }
+
+export function getDemoAnalysis(): AnalysisResult {
+  return materialize('vocal', { sensitivity: 60, splitSyllables: true })
+}
+
+/* ------------------------------------------------------------------ */
+/* 노트 파일 파서 (.mid / Tony .csv)                                      */
+/* ------------------------------------------------------------------ */
+
+export async function parseNoteFile(file: File): Promise<Note[]> {
+  const name = file.name.toLowerCase()
+  if (name.endsWith('.mid') || name.endsWith('.midi')) return parseMidi(await file.arrayBuffer())
+  return parseCsv(await file.text())
+}
+
+function parseCsv(text: string): Note[] {
+  const rows = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => l.match(/("([^"]*)"|[^,]+)/g)?.map((c) => c.replace(/^"|"$/g, '').trim()) ?? [])
+  const data = rows.filter((r) => r.length >= 3 && r.slice(0, 3).every((c) => c !== '' && !Number.isNaN(Number(c))))
+  if (!data.length) throw new Error('노트를 읽을 수 없어요. (start, freq, duration) 형식의 CSV인지 확인해 주세요.')
+  const med = (i: number) => {
+    const v = data.map((r) => Number(r[i])).sort((a, b) => a - b)
+    return v[Math.floor(v.length / 2)]
+  }
+  const freqCol = med(1) > med(2) ? 1 : 2
+  const durCol = freqCol === 1 ? 2 : 1
+  return data
+    .map((r) => {
+      const f = Number(r[freqCol])
+      return {
+        id: uid(),
+        start: Number(r[0]),
+        dur: Number(r[durCol]),
+        midi: f > 127 ? hzToMidi(f) : f,
+        lyric: r[3] && Number.isNaN(Number(r[3])) ? r[3] : undefined,
+      } as Note
+    })
+    .filter((n) => n.dur > 0 && Number.isFinite(n.midi))
+    .sort((a, b) => a.start - b.start)
+}
+
+function parseMidi(buf: ArrayBuffer): Note[] {
+  const v = new DataView(buf)
+  let p = 0
+  const str = (n: number) => {
+    let s = ''
+    for (let i = 0; i < n; i++) s += String.fromCharCode(v.getUint8(p++))
+    return s
+  }
+  if (str(4) !== 'MThd') throw new Error('올바른 MIDI 파일이 아니에요.')
+  const hdrLen = v.getUint32(p)
+  p += 4
+  const ntrks = v.getUint16(p + 2)
+  const div = v.getUint16(p + 4)
+  p += hdrLen
+  if (div & 0x8000) throw new Error('SMPTE 타임코드 MIDI는 지원하지 않아요.')
+
+  const tempos: { tick: number; us: number }[] = [{ tick: 0, us: 500000 }]
+  const tracks: { on: Map<number, number>; notes: { s: number; e: number; m: number }[] }[] = []
+
+  for (let t = 0; t < ntrks && p < v.byteLength; t++) {
+    if (str(4) !== 'MTrk') break
+    const len = v.getUint32(p)
+    p += 4
+    const end = p + len
+    let tick = 0
+    let running = 0
+    const tr = { on: new Map<number, number>(), notes: [] as { s: number; e: number; m: number }[] }
+    const varLen = () => {
+      let r = 0
+      let b: number
+      do {
+        b = v.getUint8(p++)
+        r = (r << 7) | (b & 0x7f)
+      } while (b & 0x80)
+      return r
+    }
+    while (p < end) {
+      tick += varLen()
+      let st = v.getUint8(p)
+      if (st < 0x80) st = running
+      else {
+        p++
+        if (st < 0xf0) running = st
+      }
+      if (st === 0xff) {
+        const type = v.getUint8(p++)
+        const l = varLen()
+        if (type === 0x51 && l === 3) tempos.push({ tick, us: (v.getUint8(p) << 16) | (v.getUint8(p + 1) << 8) | v.getUint8(p + 2) })
+        p += l
+      } else if (st === 0xf0 || st === 0xf7) {
+        p += varLen()
+      } else {
+        const hi = st & 0xf0
+        const d1 = v.getUint8(p++)
+        const d2 = hi === 0xc0 || hi === 0xd0 ? 0 : v.getUint8(p++)
+        if (hi === 0x90 && d2 > 0) tr.on.set(d1, tick)
+        else if (hi === 0x80 || (hi === 0x90 && d2 === 0)) {
+          const s = tr.on.get(d1)
+          if (s !== undefined) {
+            tr.notes.push({ s, e: tick, m: d1 })
+            tr.on.delete(d1)
+          }
+        }
+      }
+    }
+    p = end
+    tracks.push(tr)
+  }
+
+  tempos.sort((a, b) => a.tick - b.tick)
+  const toSec = (tick: number) => {
+    let sec = 0
+    let last = 0
+    let us = tempos[0].us
+    for (const tp of tempos) {
+      if (tp.tick > tick) break
+      sec += ((tp.tick - last) * us) / 1e6 / div
+      last = tp.tick
+      us = tp.us
+    }
+    return sec + ((tick - last) * us) / 1e6 / div
+  }
+  const melody = tracks.sort((a, b) => b.notes.length - a.notes.length)[0]
+  if (!melody || !melody.notes.length) throw new Error('MIDI에서 노트를 찾지 못했어요.')
+  return melody.notes
+    .map((n) => ({ id: uid(), start: toSec(n.s), dur: Math.max(0.05, toSec(n.e) - toSec(n.s)), midi: n.m }))
+    .sort((a, b) => a.start - b.start)
+}
+
+export function notesToCsv(notes: Note[]): string {
+  return (
+    [...notes]
+      .sort((a, b) => a.start - b.start)
+      .map((n) => [n.start.toFixed(4), midiToHz(n.midi).toFixed(3), n.dur.toFixed(4), n.lyric ? `"${n.lyric}"` : ''].join(','))
+      .join('\n') + '\n'
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* 음역 요약 · 추천 키                                                    */
+/* ------------------------------------------------------------------ */
+
+export function summarizeNotes(notes: Note[]): RangeSummary | null {
+  if (!notes.length) return null
+  let low = notes[0]
+  let high = notes[0]
+  const hist = new Map<number, number>()
+  let total = 0
+  for (const n of notes) {
+    if (n.midi < low.midi) low = n
+    if (n.midi > high.midi) high = n
+    const k = Math.round(n.midi)
+    hist.set(k, (hist.get(k) ?? 0) + n.dur)
+    total += n.dur
+  }
+  const histogram = [...hist.entries()].map(([midi, sec]) => ({ midi, sec })).sort((a, b) => a.midi - b.midi)
+  const pct = (q: number) => {
+    let acc = 0
+    for (const h of histogram) {
+      acc += h.sec
+      if (acc >= total * q) return h.midi
+    }
+    return histogram[histogram.length - 1].midi
+  }
+  return {
+    low: { midi: low.midi, time: low.start, id: low.id },
+    high: { midi: high.midi, time: high.start, id: high.id },
+    span: Math.round(high.midi - low.midi),
+    coreLow: pct(0.1),
+    coreHigh: pct(0.9),
+    noteCount: notes.length,
+    totalSec: total,
+    histogram,
+  }
+}
+
+export interface UserRange {
+  low: number
+  high: number
+}
+
+export interface FitInfo {
+  /** 곡 최저음 − 내 최저음 (음수면 내 음역보다 낮음) */
+  lowDelta: number
+  /** 곡 최고음 − 내 최고음 (양수면 내 음역보다 높음) */
+  highDelta: number
+  outRatio: number
+  inRange: boolean
+}
+
+export function evaluateFit(summary: RangeSummary, range: UserRange, shift: number): FitInfo {
+  const lowDelta = summary.low.midi + shift - range.low
+  const highDelta = summary.high.midi + shift - range.high
+  let out = 0
+  for (const h of summary.histogram) {
+    const m = h.midi + shift
+    if (m < range.low - 0.5 || m > range.high + 0.5) out += h.sec
+  }
+  return { lowDelta, highDelta, outRatio: out / summary.totalSec, inRange: lowDelta >= -0.5 && highDelta <= 0.5 }
+}
+
+function fitCost(summary: RangeSummary, range: UserRange, shift: number) {
+  let c = 0
+  for (const h of summary.histogram) {
+    const m = h.midi + shift
+    const d = m < range.low - 0.5 ? range.low - m : m > range.high + 0.5 ? m - range.high : 0
+    if (d > 0) c += h.sec * Math.pow(d, 1.3)
+  }
+  return c / summary.totalSec
+}
+
+export type OctaveMode = 'auto' | -12 | 0 | 12
+
+/** 키(−7~+7)가 정해졌을 때 내 음역에 가장 잘 맞는 옥타브 */
+export function resolveOctave(summary: RangeSummary | null, range: UserRange, key: number, mode: OctaveMode): -12 | 0 | 12 {
+  if (mode !== 'auto') return mode
+  if (!summary) return 0
+  let best: -12 | 0 | 12 = 0
+  let bestCost = Infinity
+  for (const o of [0, -12, 12] as const) {
+    const c = fitCost(summary, range, key + o) + (o ? 0.2 : 0)
+    if (c < bestCost) {
+      bestCost = c
+      best = o
+    }
+  }
+  return best
+}
+
+export function recommendKey(summary: RangeSummary | null, range: UserRange, mode: OctaveMode): { key: number; octave: -12 | 0 | 12 } {
+  if (!summary) return { key: 0, octave: 0 }
+  let best = { key: 0, octave: 0 as -12 | 0 | 12 }
+  let bestCost = Infinity
+  for (let key = -7; key <= 7; key++) {
+    const o = resolveOctave(summary, range, key, mode)
+    const c = fitCost(summary, range, key + o) + 0.04 * Math.abs(key) + (o ? 0.2 : 0)
+    if (c < bestCost - 1e-9) {
+      bestCost = c
+      best = { key, octave: o }
+    }
+  }
+  return best
+}
+
+/* ------------------------------------------------------------------ */
+/* 노트 편집 헬퍼                                                         */
+/* ------------------------------------------------------------------ */
+
+export function noteAt(notes: Note[], t: number): Note | null {
+  let found: Note | null = null
+  for (const n of notes) {
+    if (n.start > t) continue
+    if (t < n.start + n.dur && (!found || n.start > found.start)) found = n
+  }
+  return found
+}
+
+/** t 이후 horizon 초 안에서 가장 높은 음 */
+export function upcomingPeak(notes: Note[], t: number, horizon: number): Note | null {
+  let peak: Note | null = null
+  for (const n of notes) {
+    if (n.start + n.dur < t) continue
+    if (n.start > t + horizon) continue
+    if (!peak || n.midi > peak.midi) peak = n
+  }
+  return peak
+}
+
+export function splitNote(n: Note, t: number): [Note, Note] | null {
+  const min = 0.06
+  if (t < n.start + min || t > n.start + n.dur - min) return null
+  const lyric = n.lyric ?? ''
+  const cut = lyric.length >= 2 ? Math.ceil(lyric.length / 2) : lyric.length
+  return [
+    { ...n, dur: t - n.start, lyric: lyric.slice(0, cut) || undefined },
+    { ...n, id: uid(), start: t, dur: n.start + n.dur - t, lyric: lyric.slice(cut) || undefined },
+  ]
+}
+
+export function mergeNotes(ns: Note[]): Note {
+  const s = [...ns].sort((a, b) => a.start - b.start)
+  const start = s[0].start
+  const end = Math.max(...s.map((n) => n.start + n.dur))
+  const w = s.reduce((a, n) => a + n.dur, 0)
+  const midi = Math.round(s.reduce((a, n) => a + n.midi * n.dur, 0) / w)
+  return { id: s[0].id, start, dur: end - start, midi, lyric: s.map((n) => n.lyric ?? '').join('') || undefined }
+}
+
+/* ------------------------------------------------------------------ */
+/* 실시간 비교 · 연습 기록                                                 */
+/* ------------------------------------------------------------------ */
+
+export function compareFrame(target: number, user: number): Compare {
+  const diff = user - target
+  const oct = Math.max(-2, Math.min(2, Math.round(diff / 12)))
+  const folded = diff - 12 * oct
+  const cents = folded * 100
+  const a = Math.abs(cents)
+  return { target, user, cents, tier: a <= TIER_CENTS.great ? 'great' : a <= TIER_CENTS.ok ? 'ok' : 'off', octaveOff: oct }
+}
+
+export interface NoteResult {
+  id: string
+  start: number
+  dur: number
+  midi: number
+  lyric?: string
+  great: number
+  ok: number
+  off: number
+  meanCents: number
+}
+
+export interface SessionStats {
+  total: number
+  great: number
+  ok: number
+  off: number
+  meanAbsCents: number
+  biasCents: number
+  octaveFrames: number
+  userLow: number | null
+  userHigh: number | null
+  perNote: NoteResult[]
+  /** 2초 단위 구간 정확도 */
+  timeline: { start: number; great: number; ok: number; off: number }[]
+}
+
+export interface Recorder {
+  push: (note: Note, shownMidi: number, cmp: Compare, t: number) => void
+  pushUser: (midi: number) => void
+  snapshot: () => SessionStats
+  reset: () => void
+}
+
+export function createRecorder(): Recorder {
+  let acc = fresh()
+  function fresh() {
+    return {
+      total: 0,
+      great: 0,
+      ok: 0,
+      off: 0,
+      absSum: 0,
+      sum: 0,
+      oct: 0,
+      low: null as number | null,
+      high: null as number | null,
+      notes: new Map<string, NoteResult & { sum: number; n: number }>(),
+      buckets: new Map<number, { start: number; great: number; ok: number; off: number }>(),
+    }
+  }
+  return {
+    push(note, shownMidi, cmp, t) {
+      acc.total++
+      acc[cmp.tier]++
+      acc.absSum += Math.abs(cmp.cents)
+      acc.sum += cmp.cents
+      if (cmp.octaveOff !== 0) acc.oct++
+      let nr = acc.notes.get(note.id)
+      if (!nr) {
+        nr = { id: note.id, start: note.start, dur: note.dur, midi: shownMidi, lyric: note.lyric, great: 0, ok: 0, off: 0, meanCents: 0, sum: 0, n: 0 }
+        acc.notes.set(note.id, nr)
+      }
+      nr[cmp.tier]++
+      nr.sum += cmp.cents
+      nr.n++
+      const bk = Math.floor(t / 2)
+      let b = acc.buckets.get(bk)
+      if (!b) {
+        b = { start: bk * 2, great: 0, ok: 0, off: 0 }
+        acc.buckets.set(bk, b)
+      }
+      b[cmp.tier]++
+    },
+    pushUser(midi) {
+      acc.low = acc.low === null ? midi : Math.min(acc.low, midi)
+      acc.high = acc.high === null ? midi : Math.max(acc.high, midi)
+    },
+    snapshot() {
+      return {
+        total: acc.total,
+        great: acc.great,
+        ok: acc.ok,
+        off: acc.off,
+        meanAbsCents: acc.total ? acc.absSum / acc.total : 0,
+        biasCents: acc.total ? acc.sum / acc.total : 0,
+        octaveFrames: acc.oct,
+        userLow: acc.low,
+        userHigh: acc.high,
+        perNote: [...acc.notes.values()].map((n) => ({ ...n, meanCents: n.n ? n.sum / n.n : 0 })).sort((a, b) => a.start - b.start),
+        timeline: [...acc.buckets.values()].sort((a, b) => a.start - b.start),
+      }
+    },
+    reset() {
+      acc = fresh()
+    },
+  }
+}
+
+const rng = (seed: number) => () => {
+  seed = (seed * 1664525 + 1013904223) >>> 0
+  return seed / 4294967296
+}
+
+/** 첫 화면에서 연습 결과 화면이 비어 보이지 않도록 만든 샘플 연습 기록 */
+export function buildSampleSession(notes: Note[], shift: number, ability: UserRange): SessionStats {
+  const rec = createRecorder()
+  const r = rng(7)
+  const gauss = () => (r() + r() + r() + r() - 2) * 1.2
+  for (const n of notes) {
+    const shown = n.midi + shift
+    const bias = gauss() * 0.22 + (r() < 0.1 ? (r() < 0.5 ? -1 : 1) * 0.8 : 0)
+    const over = Math.max(0, shown - ability.high)
+    const under = Math.max(0, ability.low - shown)
+    const frames = Math.max(2, Math.floor(n.dur * 20))
+    for (let i = 0; i < frames; i++) {
+      const t = n.start + (i / frames) * n.dur
+      const user = shown + bias + gauss() * 0.14 - over * 0.65 - under * 0.4 + (i < 3 ? -0.35 : 0)
+      rec.push(n, shown, compareFrame(shown, user), t)
+      rec.pushUser(user)
+    }
+  }
+  return rec.snapshot()
+}
+
+/* ------------------------------------------------------------------ */
+/* 오디오 합성 (피치 시프트된 MR / 원곡 가이드)                              */
+/* ------------------------------------------------------------------ */
+
+const CHORDS: { pad: number[]; root: number }[] = [
+  { pad: [57, 60, 64], root: 45 },
+  { pad: [57, 60, 65], root: 41 },
+  { pad: [55, 60, 64], root: 48 },
+  { pad: [55, 59, 62], root: 43 },
+]
+
+const wrapSemis = (s: number) => ((((s + 6) % 12) + 12) % 12) - 6
+
+export interface SongAudioSource {
+  notes: Note[]
+  duration: number
+  bpm?: number
+}
+
+/**
+ * 목업: 실제 곡 대신 노트 데이터로 MR(코드·베이스·드럼)과 가이드 멜로디를 합성해 돌려준다.
+ * 실제 엔진에서는 원본 오디오를 피치 시프트한 AudioBuffer를 반환하면 된다.
+ */
+export async function buildPitchShiftedBuffer(song: SongAudioSource, track: 'mr' | 'original', semitones: number): Promise<AudioBuffer> {
+  const sr = 32000
+  const beat = 60 / (song.bpm ?? DEMO_META.bpm)
+  const ctx = new OfflineAudioContext(1, Math.ceil((song.duration + 1.5) * sr), sr)
+  const master = ctx.createGain()
+  master.gain.value = 0.8
+  master.connect(ctx.destination)
+
+  const noise = ctx.createBuffer(1, sr, sr)
+  const nd = noise.getChannelData(0)
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1
+
+  const padBus = ctx.createBiquadFilter()
+  padBus.type = 'lowpass'
+  padBus.frequency.value = 1500
+  padBus.connect(master)
+
+  const env = (g: GainNode, t0: number, dur: number, peak: number, atk: number, rel: number) => {
+    g.gain.setValueAtTime(0, t0)
+    g.gain.linearRampToValueAtTime(peak, t0 + atk)
+    g.gain.setValueAtTime(peak, t0 + Math.max(atk, dur - rel))
+    g.gain.linearRampToValueAtTime(0, t0 + dur)
+  }
+  const tone = (type: OscillatorType, f: number, t0: number, dur: number, peak: number, atk: number, rel: number, dest: AudioNode, detune = 0) => {
+    const o = ctx.createOscillator()
+    o.type = type
+    o.frequency.value = f
+    o.detune.value = detune
+    const g = ctx.createGain()
+    env(g, t0, dur, peak, atk, rel)
+    o.connect(g).connect(dest)
+    o.start(t0)
+    o.stop(t0 + dur + 0.05)
+  }
+  const burst = (t0: number, dur: number, peak: number, filter: BiquadFilterType, freq: number) => {
+    const s = ctx.createBufferSource()
+    s.buffer = noise
+    const f = ctx.createBiquadFilter()
+    f.type = filter
+    f.frequency.value = freq
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(peak, t0)
+    g.gain.exponentialRampToValueAtTime(0.0005, t0 + dur)
+    s.connect(f).connect(g).connect(master)
+    s.start(t0)
+    s.stop(t0 + dur + 0.02)
+  }
+
+  const hs = wrapSemis(semitones)
+  const bars = Math.ceil(song.duration / (beat * 4))
+  for (let b = 0; b < bars; b++) {
+    const t0 = b * 4 * beat
+    const ch = CHORDS[b % 4]
+    for (const m of ch.pad) {
+      tone('triangle', midiToHz(m + hs), t0, beat * 4, 0.05, 0.12, 0.35, padBus)
+      tone('sine', midiToHz(m + hs + 12), t0, beat * 4, 0.012, 0.2, 0.35, padBus, 6)
+    }
+    const root = midiToHz(ch.root + hs)
+    tone('sine', root, t0, beat * 1.4, 0.2, 0.01, 0.2, master)
+    tone('sine', root, t0 + beat * 2, beat * 0.9, 0.17, 0.01, 0.15, master)
+    tone('sine', root * 1.5, t0 + beat * 3.5, beat * 0.45, 0.1, 0.01, 0.1, master)
+    if (b >= 2) {
+      for (const k of [0, 2]) {
+        const kt = t0 + k * beat
+        const o = ctx.createOscillator()
+        const g = ctx.createGain()
+        o.frequency.setValueAtTime(130, kt)
+        o.frequency.exponentialRampToValueAtTime(42, kt + 0.14)
+        g.gain.setValueAtTime(0.55, kt)
+        g.gain.exponentialRampToValueAtTime(0.001, kt + 0.28)
+        o.connect(g).connect(master)
+        o.start(kt)
+        o.stop(kt + 0.3)
+      }
+      for (const k of [1, 3]) burst(t0 + k * beat, 0.14, 0.2, 'bandpass', 1800)
+      for (let k = 0; k < 8; k++) burst(t0 + k * beat * 0.5, 0.04, 0.05, 'highpass', 7500)
+    }
+  }
+
+  if (track === 'original') {
+    const vox = ctx.createBiquadFilter()
+    vox.type = 'lowpass'
+    vox.frequency.value = 3000
+    const vg = ctx.createGain()
+    vg.gain.value = 0.22
+    vox.connect(vg).connect(master)
+    for (const n of song.notes) {
+      const f = midiToHz(n.midi + semitones)
+      const t0 = Math.max(0, n.start)
+      const dur = Math.max(0.08, n.dur)
+      tone('sawtooth', f, t0, dur, 0.35, 0.035, 0.08, vox)
+      const o = ctx.createOscillator()
+      o.type = 'sine'
+      o.frequency.value = f
+      const g = ctx.createGain()
+      env(g, t0, dur, 0.7, 0.03, 0.08)
+      if (dur > 0.6) {
+        const lfo = ctx.createOscillator()
+        lfo.frequency.value = 5.6
+        const lg = ctx.createGain()
+        lg.gain.setValueAtTime(0, t0)
+        lg.gain.linearRampToValueAtTime(14, t0 + Math.min(0.5, dur * 0.6))
+        lfo.connect(lg).connect(o.detune)
+        lfo.start(t0)
+        lfo.stop(t0 + dur + 0.05)
+      }
+      o.connect(g).connect(vox)
+      o.start(t0)
+      o.stop(t0 + dur + 0.05)
+    }
+  }
+
+  return ctx.startRendering()
+}
+
+/* ------------------------------------------------------------------ */
+/* 플레이어                                                              */
+/* ------------------------------------------------------------------ */
+
+export interface Player {
+  load: (buf: AudioBuffer) => void
+  play: () => Promise<void>
+  pause: () => void
+  seek: (t: number) => void
+  /** 실제로 들리는 위치(초). 출력 지연 반영 */
+  getTime: () => number
+  isPlaying: () => boolean
+  setVolume: (v: number) => void
+  onEnded: (cb: () => void) => void
+  dispose: () => void
+}
+
+export function createPlayer(): Player {
+  let ctx: AudioContext | null = null
+  let gain: GainNode | null = null
+  let buffer: AudioBuffer | null = null
+  let src: AudioBufferSourceNode | null = null
+  let offset = 0
+  let startedAt = 0
+  let playing = false
+  let token = 0
+  let volume = 0.8
+  let endedCb: (() => void) | null = null
+
+  const ensure = () => {
+    if (!ctx) {
+      ctx = new AudioContext({ latencyHint: 'interactive' })
+      gain = ctx.createGain()
+      gain.gain.value = volume * volume
+      gain.connect(ctx.destination)
+    }
+    return ctx
+  }
+  const rawPos = () => (playing && ctx ? offset + (ctx.currentTime - startedAt) : offset)
+  const stopSrc = () => {
+    token++
+    if (src) {
+      try {
+        src.stop()
+      } catch {
+        /* already stopped */
+      }
+      src.disconnect()
+      src = null
+    }
+  }
+  const startSrc = () => {
+    if (!buffer) return
+    const c = ensure()
+    void c.resume()
+    if (offset >= buffer.duration - 0.02) offset = 0
+    const s = c.createBufferSource()
+    s.buffer = buffer
+    s.connect(gain!)
+    const my = ++token
+    s.onended = () => {
+      if (my !== token) return
+      playing = false
+      offset = buffer ? buffer.duration : 0
+      src = null
+      endedCb?.()
+    }
+    s.start(0, offset)
+    src = s
+    startedAt = c.currentTime
+    playing = true
+  }
+
+  return {
+    load(buf) {
+      const was = playing
+      const pos = rawPos()
+      stopSrc()
+      playing = false
+      buffer = buf
+      offset = Math.min(pos, buf.duration)
+      if (was) startSrc()
+    },
+    async play() {
+      if (playing) return
+      startSrc()
+    },
+    pause() {
+      if (!playing) return
+      offset = rawPos()
+      stopSrc()
+      playing = false
+    },
+    seek(t) {
+      const max = buffer ? buffer.duration : t
+      const was = playing
+      stopSrc()
+      playing = false
+      offset = Math.max(0, Math.min(t, max))
+      if (was) startSrc()
+    },
+    getTime() {
+      const lat = ctx ? (ctx.outputLatency || ctx.baseLatency || 0) : 0
+      const t = playing ? rawPos() - lat : offset
+      return Math.max(0, buffer ? Math.min(t, buffer.duration) : t)
+    },
+    isPlaying: () => playing,
+    setVolume(v) {
+      volume = v
+      if (gain) gain.gain.value = v * v
+    },
+    onEnded(cb) {
+      endedCb = cb
+    },
+    dispose() {
+      stopSrc()
+      void ctx?.close()
+      ctx = null
+    },
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 마이크 / 피치 검출                                                     */
+/* ------------------------------------------------------------------ */
+
+const listeners = new Set<(f: PitchFrame) => void>()
+const emit = (f: PitchFrame) => listeners.forEach((l) => l(f))
+
+export function onPitch(cb: (f: PitchFrame) => void): () => void {
+  listeners.add(cb)
+  return () => {
+    listeners.delete(cb)
+  }
+}
+
+interface MicRuntime {
+  stream?: MediaStream
+  ctx?: AudioContext
+  timer: ReturnType<typeof setInterval>
+}
+let mic: MicRuntime | null = null
+
+function detectPitch(buf: Float32Array, sr: number): { hz: number; clarity: number; level: number } {
+  const n = 1024
+  let e = 0
+  for (let i = 0; i < n; i++) e += buf[i] * buf[i]
+  const level = Math.sqrt(e / n)
+  if (level < 0.012) return { hz: 0, clarity: 0, level }
+  const minLag = Math.floor(sr / 1000)
+  const maxLag = Math.min(Math.floor(sr / 75), buf.length - n - 1)
+  const nsdf = new Float32Array(maxLag + 1)
+  let max = 0
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let ac = 0
+    let m = 0
+    for (let i = 0; i < n; i++) {
+      const a = buf[i]
+      const b = buf[i + lag]
+      ac += a * b
+      m += a * a + b * b
+    }
+    const v = m > 0 ? (2 * ac) / m : 0
+    nsdf[lag] = v
+    if (v > max) max = v
+  }
+  if (max < 0.6) return { hz: 0, clarity: max, level }
+  let best = -1
+  for (let lag = minLag + 1; lag < maxLag; lag++) {
+    if (nsdf[lag] > 0.9 * max && nsdf[lag] >= nsdf[lag - 1] && nsdf[lag] >= nsdf[lag + 1] && nsdf[lag] > 0.3) {
+      best = lag
+      break
+    }
+  }
+  if (best < 0) return { hz: 0, clarity: max, level }
+  const a = nsdf[best - 1]
+  const b = nsdf[best]
+  const c = nsdf[best + 1]
+  const denom = a - 2 * b + c
+  const shift = denom !== 0 ? (0.5 * (a - c)) / denom : 0
+  return { hz: sr / (best + shift), clarity: b, level }
+}
+
+function startDemoSinger(demo: DemoSinger) {
+  const ability = demo.ability ?? { low: 47.7, high: 69.2 }
+  const r = rng(Date.now() & 0xffff)
+  const gauss = () => (r() + r() + r() - 1.5) * 1.6
+  let cur: number | null = null
+  let lastTarget: number | null = null
+  let bias = 0
+  const t0 = performance.now()
+  const timer = setInterval(() => {
+    const now = (performance.now() - t0) / 1000
+    const target = demo.getTargetMidi()
+    let midi: number | null = null
+    if (target !== null) {
+      if (lastTarget === null || Math.abs(target - lastTarget) > 0.4) {
+        bias = gauss() * 0.2 + (r() < 0.12 ? (r() < 0.5 ? -1 : 1) * 0.75 : 0)
+      }
+      let want = target + bias
+      if (want > ability.high) want = ability.high - (want - ability.high) * 0.7 + gauss() * 0.3
+      if (want < ability.low - 0.2) {
+        cur = null
+        want = NaN
+      }
+      if (!Number.isNaN(want)) {
+        cur = cur === null ? want - 0.5 : cur + (want - cur) * 0.22
+        midi = cur + Math.sin(now * 2 * Math.PI * 5.6) * 0.13 + gauss() * 0.03
+      }
+    } else cur = null
+    lastTarget = target
+    emit({
+      time: performance.now() / 1000,
+      hz: midi === null ? null : midiToHz(midi),
+      midi,
+      clarity: midi === null ? 0 : 0.95,
+      level: midi === null ? 0.002 : 0.12 + r() * 0.06,
+    })
+  }, 16)
+  mic = { timer }
+}
+
+export async function startMic(opts: MicOptions = {}): Promise<MicResult> {
+  stopMic()
+  const mode = opts.mode ?? 'auto'
+  let reason: string | undefined
+  if (mode !== 'demo') {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('이 브라우저에서는 마이크를 사용할 수 없어요.')
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      })
+      const ctx = new AudioContext()
+      const node = ctx.createMediaStreamSource(stream)
+      const an = ctx.createAnalyser()
+      an.fftSize = 2048
+      node.connect(an)
+      const buf = new Float32Array(an.fftSize)
+      const recent: number[] = []
+      const timer = setInterval(() => {
+        an.getFloatTimeDomainData(buf)
+        const { hz, clarity, level } = detectPitch(buf, ctx.sampleRate)
+        let midi: number | null = hz > 0 ? hzToMidi(hz) : null
+        if (midi !== null) {
+          recent.push(midi)
+          if (recent.length > 3) recent.shift()
+          midi = [...recent].sort((a, b) => a - b)[Math.floor(recent.length / 2)]
+        } else recent.length = 0
+        emit({ time: performance.now() / 1000, hz: midi === null ? null : midiToHz(midi), midi, clarity, level })
+      }, 20)
+      mic = { stream, ctx, timer }
+      return { mode: 'live', fellBack: false }
+    } catch (e) {
+      reason = e instanceof Error ? e.message : '마이크 권한을 얻지 못했어요.'
+      if (mode === 'live') throw e
+    }
+  }
+  startDemoSinger(opts.demo ?? { getTargetMidi: () => null })
+  return { mode: 'demo', fellBack: mode === 'auto', reason }
+}
+
+export function stopMic(): void {
+  if (!mic) return
+  clearInterval(mic.timer)
+  mic.stream?.getTracks().forEach((t) => t.stop())
+  void mic.ctx?.close()
+  mic = null
+}

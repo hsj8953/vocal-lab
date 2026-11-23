@@ -1,0 +1,479 @@
+import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
+import * as engine from '@/lib/engine'
+import type { AnalysisOptions, Note, OctaveMode, PitchFrame, Player, Recorder } from '@/lib/engine'
+import { clamp } from '@/lib/music'
+import type { Notation } from '@/lib/music'
+import {
+  DEMO_ABILITY,
+  EMPTY_SESSION,
+  createInitialState,
+  type InputKind,
+  type Live,
+  type RailTab,
+  type Source,
+  type StudioState,
+  type Tool,
+  type View,
+} from './studio-types'
+
+export interface ActionEnv {
+  sRef: MutableRefObject<StudioState>
+  setS: Dispatch<SetStateAction<StudioState>>
+  live: Live
+  playerRef: MutableRefObject<Player | null>
+  recorder: Recorder
+  demoScript: MutableRefObject<(() => number | null) | null>
+  pendingPlay: MutableRefObject<boolean>
+}
+
+const stripExt = (n: string) => n.replace(/\.[^.]+$/, '')
+
+export function createActions(env: ActionEnv) {
+  const { sRef, setS, live, playerRef, recorder, demoScript, pendingPlay } = env
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined
+  let measureHist: number[] = []
+
+  const set = (patch: Partial<StudioState> | ((p: StudioState) => Partial<StudioState>)) =>
+    setS((p) => ({ ...p, ...(typeof patch === 'function' ? patch(p) : patch) }))
+
+  const notify = (msg: string) => {
+    set({ notice: msg })
+    clearTimeout(noticeTimer)
+    noticeTimer = setTimeout(() => set({ notice: null }), 5200)
+  }
+
+  const syncSec = () => sRef.current.syncMs / 1000
+
+  /* ------------------------------ 재생 ------------------------------ */
+
+  const seek = (t: number) => {
+    const dur = sRef.current.project.duration
+    const next = clamp(t, 0, dur)
+    if (next < live.time - 0.05) live.trace = live.trace.filter((p) => p.t < next)
+    playerRef.current?.seek(next)
+    live.time = next + syncSec()
+  }
+
+  const play = async () => {
+    const p = playerRef.current
+    if (!p) return
+    if (sRef.current.bufferStatus !== 'ready') {
+      pendingPlay.current = true
+      return
+    }
+    if (sRef.current.measure.step !== 'idle') return
+    await p.play()
+    live.playing = true
+    set({ playing: true })
+  }
+  const pause = () => {
+    playerRef.current?.pause()
+    live.playing = false
+    set({ playing: false })
+  }
+  const togglePlay = () => (sRef.current.playing ? pause() : void play())
+  const skip = (d: number) => seek((playerRef.current?.getTime() ?? 0) + d)
+
+  /* ------------------------------ 마이크 ------------------------------ */
+
+  const startMicNow = async () => {
+    const st = sRef.current
+    try {
+      const res = await engine.startMic({
+        mode: st.micPref === 'demo' ? 'demo' : 'auto',
+        demo: {
+          ability: DEMO_ABILITY,
+          getTargetMidi: () => {
+            if (demoScript.current) return demoScript.current()
+            if (!live.playing) return null
+            const n = engine.noteAt(live.notes, live.time)
+            return n ? n.midi + live.shift : null
+          },
+        },
+      })
+      live.micOn = true
+      set({ mic: { on: true, mode: res.mode } })
+      if (res.fellBack) notify('마이크를 사용할 수 없어 데모 보컬(시뮬레이션)로 전환했어요.')
+    } catch {
+      notify('마이크를 켤 수 없어요. 브라우저의 마이크 권한을 확인해 주세요.')
+    }
+  }
+  const stopMicNow = () => {
+    engine.stopMic()
+    live.micOn = false
+    live.pitchMidi = null
+    live.cmp = null
+    live.micLevel = 0
+    set({ mic: { on: false, mode: null } })
+  }
+  const toggleMic = () => (sRef.current.mic.on ? stopMicNow() : void startMicNow())
+
+  const handlePitch = (frame: PitchFrame) => {
+    const st = sRef.current
+    live.pitchMidi = frame.midi
+    live.micLevel = frame.level
+
+    if (st.measure.step !== 'idle') {
+      if (frame.midi !== null && frame.clarity > 0.8) {
+        measureHist.push(frame.midi)
+        if (measureHist.length > 10) measureHist.shift()
+        if (measureHist.length === 10) {
+          const mn = Math.min(...measureHist)
+          const mx = Math.max(...measureHist)
+          if (mx - mn < 0.7) {
+            const med = [...measureHist].sort((a, b) => a - b)[5]
+            const m = st.measure
+            if (m.step === 'low' && (m.low === null || med < m.low - 0.04)) set({ measure: { ...m, low: med } })
+            if (m.step === 'high' && (m.high === null || med > m.high + 0.04)) set({ measure: { ...m, high: med } })
+          }
+        }
+      } else measureHist = []
+      return
+    }
+
+    if (!live.playing) {
+      live.cmp = null
+      return
+    }
+    const t = live.time
+    const target = engine.noteAt(live.notes, t)
+    if (frame.midi === null) {
+      const last = live.trace[live.trace.length - 1]
+      if (last && last.midi !== null) live.trace.push({ t, midi: null, tier: null })
+      live.cmp = null
+      live.targetNoteId = target?.id ?? null
+      return
+    }
+    recorder.pushUser(frame.midi)
+    if (target) {
+      const shown = target.midi + live.shift
+      const cmp = engine.compareFrame(shown, frame.midi)
+      live.cmp = cmp
+      live.targetNoteId = target.id
+      recorder.push(target, shown, cmp, t)
+      const sc = live.noteScore.get(target.id) ?? [0, 0, 0]
+      sc[cmp.tier === 'great' ? 0 : cmp.tier === 'ok' ? 1 : 2]++
+      live.noteScore.set(target.id, sc)
+      live.trace.push({ t, midi: frame.midi, tier: cmp.tier })
+    } else {
+      live.cmp = null
+      live.targetNoteId = null
+      live.trace.push({ t, midi: frame.midi, tier: null })
+    }
+    if (live.trace.length > 24000) live.trace.splice(0, 4000)
+  }
+
+  const flushSession = () => set({ session: recorder.snapshot(), sessionIsSample: false })
+
+  const resetSession = () => {
+    recorder.reset()
+    live.trace = []
+    live.noteScore.clear()
+    set({ session: EMPTY_SESSION, sessionIsSample: false })
+  }
+
+  /* ------------------------------ 음역 측정 ------------------------------ */
+
+  const scriptFor = (step: 'low' | 'high') => {
+    const t0 = performance.now()
+    demoScript.current = () => {
+      const e = (performance.now() - t0) / 1000
+      if (e < 0.7) return null
+      return step === 'low' ? Math.max(40, 57.5 - (e - 0.7) * 1.7) : Math.min(82, 61.5 + (e - 0.7) * 1.9)
+    }
+  }
+
+  const startMeasure = async () => {
+    pause()
+    measureHist = []
+    set({ measure: { step: 'low', low: null, high: null }, railTab: 'key' })
+    if (!sRef.current.mic.on) await startMicNow()
+    scriptFor('low')
+  }
+  const confirmMeasure = () => {
+    const m = sRef.current.measure
+    measureHist = []
+    if (m.step === 'low') {
+      set({ measure: { ...m, step: 'high' } })
+      scriptFor('high')
+      return
+    }
+    demoScript.current = null
+    const cur = sRef.current.userRange
+    let low = m.low ?? cur.low
+    let high = m.high ?? cur.high
+    low = Math.round(low * 10) / 10
+    high = Math.round(high * 10) / 10
+    if (high - low < 5) high = low + 5
+    set({ userRange: { low, high }, measure: { step: 'idle', low: null, high: null } })
+    stopMicNow()
+    notify('측정한 음역을 적용했어요. 아래에서 미세 조정할 수 있어요.')
+  }
+  const cancelMeasure = () => {
+    demoScript.current = null
+    measureHist = []
+    set({ measure: { step: 'idle', low: null, high: null } })
+    stopMicNow()
+  }
+  const nudgeRange = (which: 'low' | 'high', delta: number) =>
+    set((p) => {
+      const r = { ...p.userRange }
+      r[which] = Math.round((r[which] + delta) * 100) / 100
+      if (r.high - r.low < 2) r[which === 'low' ? 'low' : 'high'] = p.userRange[which]
+      return { userRange: r }
+    })
+
+  /* ------------------------------ 분석 ------------------------------ */
+
+  const analyze = async (goStudio: boolean) => {
+    const st = sRef.current
+    const { inputs, analysis } = st
+    if (!inputs.original && !inputs.noteFile) {
+      notify('먼저 원곡 파일을 넣어 주세요.')
+      return
+    }
+    pause()
+    set({ analysis: { ...analysis, status: 'running', stage: '준비 중', ratio: 0.02, error: undefined } })
+    const opts: AnalysisOptions = { sensitivity: analysis.sensitivity, splitSyllables: analysis.splitSyllables }
+    const prog = (stage: string, ratio: number) => set((p) => ({ analysis: { ...p.analysis, stage, ratio } }))
+    try {
+      let notes: Note[]
+      let duration = st.project.duration
+      let bpm = st.project.bpm
+      let source: 'original' | 'vocal' | 'noteFile'
+      let warnings: string[] = []
+      if (inputs.noteFile?.file) {
+        prog('노트 파일 읽는 중', 0.4)
+        notes = await engine.parseNoteFile(inputs.noteFile.file)
+        duration = Math.max(duration, (notes[notes.length - 1]?.start ?? 0) + 4)
+        source = 'noteFile'
+      } else {
+        const res = inputs.vocal
+          ? await engine.analyzeWithVocal(inputs.original?.file ?? null, inputs.vocal.file as File, opts, prog)
+          : await engine.analyzeOriginal(inputs.original?.file ?? null, opts, prog)
+        notes = res.notes
+        duration = res.duration
+        bpm = res.bpm
+        warnings = res.warnings
+        source = res.source
+      }
+      let alignResult = st.align.result
+      if (inputs.mr) {
+        prog('MR 시간 정렬', 0.95)
+        alignResult = await engine.alignMr(inputs.original?.file ?? null, inputs.mr.file)
+      } else alignResult = null
+
+      const isNew = goStudio
+      playerRef.current?.seek(0)
+      live.time = 0
+      live.trace = []
+      set((p) => ({
+        notes,
+        past: [],
+        future: [],
+        selection: [],
+        notesRev: p.notesRev + 1,
+        project: {
+          ...p.project,
+          duration,
+          bpm,
+          title: isNew && inputs.original?.file ? stripExt(inputs.original.name) : p.project.title,
+          artist: isNew && inputs.original?.file ? '내 파일' : p.project.artist,
+        },
+        analysis: { ...p.analysis, status: 'done', stage: '완료', ratio: 1, source, warnings },
+        align: { status: inputs.mr ? 'done' : 'idle', result: alignResult },
+        source: inputs.mr ? p.source : 'original',
+        view: goStudio ? 'studio' : p.view,
+        railTab: goStudio ? 'analysis' : p.railTab,
+        ...(isNew ? { session: EMPTY_SESSION, sessionIsSample: false } : {}),
+      }))
+      if (isNew) {
+        recorder.reset()
+        live.noteScore.clear()
+      }
+    } catch (e) {
+      set((p) => ({ analysis: { ...p.analysis, status: 'error', error: e instanceof Error ? e.message : '분석에 실패했어요.' } }))
+    }
+  }
+
+  const runAlign = async () => {
+    const st = sRef.current
+    if (!st.inputs.mr) return
+    set({ align: { status: 'running', result: st.align.result } })
+    const res = await engine.alignMr(st.inputs.original?.file ?? null, st.inputs.mr.file)
+    set({ align: { status: 'done', result: res } })
+  }
+
+  /* ------------------------------ 노트 편집 ------------------------------ */
+
+  const pushHistory = (p: StudioState) => ({ past: [...p.past.slice(-49), p.notes], future: [] as Note[][] })
+
+  const commitNotes = (notes: Note[], selection?: string[]) =>
+    set((p) => ({ ...pushHistory(p), notes, notesRev: p.notesRev + 1, ...(selection ? { selection } : {}) }))
+
+  const sorted = (n: Note[]) => [...n].sort((a, b) => a.start - b.start)
+
+  const selectedNotes = () => {
+    const st = sRef.current
+    const ids = new Set(st.selection)
+    return st.notes.filter((n) => ids.has(n.id))
+  }
+
+  return {
+    set,
+    notify,
+    syncSec,
+    setView: (view: View) => set({ view }),
+    setRailTab: (railTab: RailTab) => set({ railTab }),
+    setNotation: (notation: Notation) => set({ notation }),
+    setTool: (tool: Tool) => set({ tool }),
+
+    /* 입력 파일 */
+    setInput: (kind: InputKind, file: File | null) =>
+      set((p) => {
+        const inputs = { ...p.inputs }
+        if (file) inputs[kind] = { name: file.name, size: file.size, file }
+        else delete inputs[kind]
+        return { inputs }
+      }),
+    setSensitivity: (v: number) => set((p) => ({ analysis: { ...p.analysis, sensitivity: v } })),
+    setSplit: (v: boolean) => set((p) => ({ analysis: { ...p.analysis, splitSyllables: v } })),
+    analyze,
+    runAlign,
+    resetToDemo: () => {
+      pause()
+      recorder.reset()
+      live.trace = []
+      live.noteScore.clear()
+      live.time = 0
+      playerRef.current?.seek(0)
+      const init = createInitialState()
+      set({ ...init, bufferStatus: 'loading', notation: sRef.current.notation, syncMs: sRef.current.syncMs, volume: sRef.current.volume })
+    },
+
+    /* 재생 */
+    seek,
+    play,
+    pause,
+    togglePlay,
+    skip,
+    setSource: (source: Source) => set({ source }),
+    setVolume: (volume: number) => {
+      playerRef.current?.setVolume(sRef.current.muted ? 0 : volume)
+      set({ volume })
+    },
+    toggleMute: () => {
+      const muted = !sRef.current.muted
+      playerRef.current?.setVolume(muted ? 0 : sRef.current.volume)
+      set({ muted })
+    },
+    setSyncMs: (ms: number) => set({ syncMs: clamp(Math.round(ms), -400, 400) }),
+
+    /* 키 · 음역 */
+    setKey: (keyShift: number) => set({ keyShift: clamp(keyShift, -7, 7) }),
+    setOctaveMode: (octaveMode: OctaveMode) => set({ octaveMode }),
+    setMicPref: (micPref: 'auto' | 'demo') => set({ micPref }),
+    nudgeRange,
+    startMeasure,
+    confirmMeasure,
+    cancelMeasure,
+
+    /* 마이크 · 세션 */
+    toggleMic,
+    handlePitch,
+    flushSession,
+    resetSession,
+
+    /* 편집 */
+    setSelection: (ids: string[]) => set({ selection: ids }),
+    beginDrag: () => set((p) => pushHistory(p)),
+    dragNotes: (notes: Note[]) => set({ notes }),
+    endDrag: () => set((p) => ({ notesRev: p.notesRev + 1 })),
+    commitNotes,
+    deleteSelected: () => {
+      const ids = new Set(sRef.current.selection)
+      if (!ids.size) return
+      commitNotes(
+        sRef.current.notes.filter((n) => !ids.has(n.id)),
+        [],
+      )
+    },
+    mergeSelected: () => {
+      const sel = selectedNotes()
+      if (sel.length < 2) {
+        notify('합치려면 노트를 2개 이상 선택하세요. (Shift+클릭)')
+        return
+      }
+      const merged = engine.mergeNotes(sel)
+      const ids = new Set(sel.map((n) => n.id))
+      commitNotes(sorted([...sRef.current.notes.filter((n) => !ids.has(n.id)), merged]), [merged.id])
+    },
+    splitAt: (id: string, t: number) => {
+      const n = sRef.current.notes.find((x) => x.id === id)
+      if (!n) return
+      const parts = engine.splitNote(n, t)
+      if (!parts) {
+        notify('노트 가장자리에서는 자를 수 없어요.')
+        return
+      }
+      commitNotes(sorted([...sRef.current.notes.filter((x) => x.id !== id), ...parts]), [parts[1].id])
+    },
+    splitAtPlayhead: () => {
+      const t = live.time - syncSec()
+      const sel = selectedNotes()
+      const target = sel.find((n) => t > n.start && t < n.start + n.dur) ?? engine.noteAt(sRef.current.notes, t)
+      if (!target) {
+        notify('재생 위치에 노트가 없어요.')
+        return
+      }
+      const parts = engine.splitNote(target, t)
+      if (!parts) {
+        notify('노트 가장자리에서는 자를 수 없어요.')
+        return
+      }
+      commitNotes(sorted([...sRef.current.notes.filter((x) => x.id !== target.id), ...parts]), [parts[1].id])
+    },
+    addNote: (n: Note) => commitNotes(sorted([...sRef.current.notes, n]), [n.id]),
+    nudgeSelected: (d: { pitch?: number; time?: number; dur?: number }) => {
+      const ids = new Set(sRef.current.selection)
+      if (!ids.size) return
+      commitNotes(
+        sRef.current.notes.map((n) =>
+          ids.has(n.id)
+            ? {
+                ...n,
+                midi: n.midi + (d.pitch ?? 0),
+                start: Math.max(0, n.start + (d.time ?? 0)),
+                dur: Math.max(0.06, n.dur + (d.dur ?? 0)),
+              }
+            : n,
+        ),
+      )
+    },
+    undo: () =>
+      set((p) => {
+        if (!p.past.length) return {}
+        const prev = p.past[p.past.length - 1]
+        return { notes: prev, past: p.past.slice(0, -1), future: [p.notes, ...p.future], notesRev: p.notesRev + 1, selection: [] }
+      }),
+    redo: () =>
+      set((p) => {
+        if (!p.future.length) return {}
+        const next = p.future[0]
+        return { notes: next, future: p.future.slice(1), past: [...p.past, p.notes], notesRev: p.notesRev + 1, selection: [] }
+      }),
+    exportCsv: () => {
+      const csv = engine.notesToCsv(sRef.current.notes)
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${sRef.current.project.title || 'notes'}_notes.csv`
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      notify('노트를 CSV로 저장했어요.')
+    },
+  }
+}
+
+export type Actions = ReturnType<typeof createActions>
