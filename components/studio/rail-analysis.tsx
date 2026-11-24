@@ -1,8 +1,8 @@
 'use client'
 
-import { AlertTriangle, FileText, Loader2, PencilLine, RefreshCw, Wand2, X } from 'lucide-react'
+import { AlertTriangle, Download, FileText, Loader2, PencilLine, RefreshCw, Wand2, X } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { METHOD_LABEL } from '@/lib/engine'
+import { METHOD_LABEL, realSeparatedWav } from '@/lib/engine'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
@@ -427,8 +427,50 @@ function SeparationSection() {
           {running ? an.stage : '보컬 분리하고 다시 분석'}
         </Button>
       ) : null}
+      {!demo && !hasVocalFile && sep ? <SeparatedDownload title={s.project.title} /> : null}
       {!demo && !hasVocalFile && !sep ? <p className="mt-2 text-[11px] text-muted-foreground">처음 한 번 모델 64MB를 받고, 곡마다 몇 분 걸려요. 결과는 저장해 둬서 같은 곡은 바로 끝나요.</p> : null}
     </Section>
+  )
+}
+
+/** 분리한 보컬·반주를 WAV로 내려받기 */
+function SeparatedDownload({ title }: { title: string }) {
+  const { a } = useStudio()
+  const [busy, setBusy] = useState<'vocal' | 'inst' | null>(null)
+  const save = async (kind: 'vocal' | 'inst') => {
+    setBusy(kind)
+    try {
+      const blob = await realSeparatedWav(kind)
+      if (!blob) {
+        a.notify('분리 결과가 없어요. 다시 분석해 주세요.')
+        return
+      }
+      const url = URL.createObjectURL(blob)
+      const el = document.createElement('a')
+      el.href = url
+      el.download = `${title || '곡'} (${kind === 'vocal' ? '보컬' : '반주'}).wav`
+      document.body.appendChild(el)
+      el.click()
+      el.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 10000)
+    } catch (e) {
+      a.notify('파일을 만들지 못했어요: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setBusy(null)
+    }
+  }
+  return (
+    <div className="mt-2">
+      <div className="grid grid-cols-2 gap-2">
+        {(['vocal', 'inst'] as const).map((k) => (
+          <Button key={k} size="sm" variant="outline" disabled={!!busy} onClick={() => void save(k)}>
+            {busy === k ? <Loader2 className="animate-spin" /> : <Download />}
+            {k === 'vocal' ? '보컬 받기' : '반주 받기'}
+          </Button>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">원곡 키 그대로 WAV로 받아요. 곡 하나에 수십 MB예요.</p>
+    </div>
   )
 }
 

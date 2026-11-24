@@ -1361,6 +1361,7 @@ export const realLevelInfo = (): { orig: number; mr: number } | null => real.lev
 /** 재생에 쓰는 오디오 컨텍스트 (하나를 같이 쓴다) */
 export const audioContext = (): AudioContext => real.audioCtx()
 export const realHasGuideVocal = (): boolean => real.hasGuideVocal()
+export const realSeparatedWav = (kind: 'vocal' | 'inst'): Promise<Blob | null> => real.separatedWav(kind)
 
 export async function realTrackBuffer(track: 'mr' | 'original' | 'vocal', semitones: number, onProg?: (p: number, eta: string) => void): Promise<AudioBuffer | null> {
   return real.getTrackBuffer(track, semitones, onProg)
