@@ -1197,16 +1197,11 @@ export async function startMic(opts: MicOptions = {}): Promise<MicResult> {
       an.fftSize = 2048
       node.connect(an)
       const buf = new Float32Array(an.fftSize)
-      const recent: number[] = []
+      const spike = makeSpikeFilter()
       const timer = setInterval(() => {
         an.getFloatTimeDomainData(buf)
         const { hz, clarity, level } = detectPitch(buf, ctx.sampleRate)
-        let midi: number | null = hz > 0 ? hzToMidi(hz) : null
-        if (midi !== null) {
-          recent.push(midi)
-          if (recent.length > 3) recent.shift()
-          midi = [...recent].sort((a, b) => a - b)[Math.floor(recent.length / 2)]
-        } else recent.length = 0
+        const midi = spike(hz > 0 ? hzToMidi(hz) : null)
         emit({ time: performance.now() / 1000, hz: midi === null ? null : midiToHz(midi), midi, clarity, level })
       }, 20)
       mic = { stream, ctx, timer }
@@ -1218,6 +1213,45 @@ export async function startMic(opts: MicOptions = {}): Promise<MicResult> {
   }
   startDemoSinger(opts.demo ?? { getTargetMidi: () => null })
   return { mode: 'demo', fellBack: mode === 'auto', reason }
+}
+
+/**
+ * 마이크 음 높이에서 순간적으로 튀는 값을 걸러낸다 (20ms 프레임 기준).
+ * - 바로 앞 음과 2.5반음 넘게 차이 나는 값은 바로 쓰지 않고 보류한다.
+ *   보류한 값이 3프레임(약 60ms) 연속으로 1반음 안에서 비슷하면 진짜 음 이동으로 받아들이고,
+ *   아니면 버린다 (자음·숨소리·배음 착각으로 한두 프레임만 튀는 경우).
+ * - 소리가 막 시작될 때도 2프레임이 비슷해야 받아들인다.
+ * - 받아들인 값은 최근 3개의 중앙값으로 살짝 다듬는다.
+ */
+export function makeSpikeFilter(jump = 2.5) {
+  let prev: number | null = null
+  let pend: number[] = []
+  let recent: number[] = []
+  const accept = (m: number) => {
+    prev = m
+    pend = []
+    recent.push(m)
+    if (recent.length > 3) recent.shift()
+    return [...recent].sort((a, b) => a - b)[Math.floor(recent.length / 2)]
+  }
+  return (m: number | null): number | null => {
+    if (m === null) {
+      prev = null
+      pend = []
+      recent = []
+      return null
+    }
+    if (prev !== null && Math.abs(m - prev) <= jump) return accept(m)
+    pend.push(m)
+    if (pend.length > 4) pend.shift()
+    const need = prev === null ? 2 : 3
+    const tail = pend.slice(-need)
+    if (tail.length === need && Math.max(...tail) - Math.min(...tail) <= 1) {
+      recent = []
+      return accept(m)
+    }
+    return null
+  }
 }
 
 export function micErrorMessage(e: unknown): string {

@@ -310,9 +310,11 @@ export function StageCanvas() {
         continue
       }
       const pt: [number, number] = [x(p.t), y(p.midi)]
-      const broken = !prev || p.t - prev.t > 0.18 || !seg || seg.tier !== p.tier
+      // 음이 갑자기 크게 바뀌면 선을 잇지 않는다 (세로줄 방지)
+      const leap = !!prev && prev.midi !== null && Math.abs(p.midi - prev.midi) > 2.5
+      const broken = !prev || p.t - prev.t > 0.18 || leap || !seg || seg.tier !== p.tier
       if (broken) {
-        const joinFrom: [number, number] | null = seg && prev && p.t - prev.t <= 0.18 ? seg.pts[seg.pts.length - 1] : null
+        const joinFrom: [number, number] | null = seg && prev && !leap && p.t - prev.t <= 0.18 ? seg.pts[seg.pts.length - 1] : null
         flush()
         seg = { tier: p.tier, pts: joinFrom ? [joinFrom, pt] : [pt] }
       } else seg!.pts.push(pt)
