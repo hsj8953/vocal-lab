@@ -559,16 +559,16 @@ function RangeSection({ cells }: { cells: RangeCell[] }) {
   const weak = cells.filter((c) => c.notes >= 2 && c.acc < 0.6)
   return (
     <section className="rounded-2xl border border-border bg-card p-5 lg:col-span-2">
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.3fr_1fr]">
-        <div>
+      <div className="grid grid-cols-1 gap-6">
+        <div className="min-w-0">
           <h2 className="text-sm font-semibold">음 높이별 정확도</h2>
           <p className="mt-1 text-[11px] text-muted-foreground">칸 색은 그 음을 맞힌 비율, 아래 숫자는 평균 음 차이(센트)예요.</p>
           <div className="scroll-thin mt-3 overflow-x-auto pb-1">
-            <div className="flex min-w-max gap-0.5">
+            <div className="flex gap-0.5" style={{ minWidth: keys.length * 26 }}>
               {keys.map((m) => {
                 const c = map.get(m)
                 return (
-                  <div key={m} className="flex w-9 flex-col items-center gap-1" title={c ? `${noteName(m, s.notation)} · 노트 ${c.notes}개 · 맞힘 ${Math.round(c.acc * 100)}% · 평균 ${c.cents > 0 ? '+' : ''}${Math.round(c.cents)}센트` : `${noteName(m, s.notation)} · 이 곡에 없음`}>
+                  <div key={m} className="flex min-w-0 flex-1 flex-col items-center gap-1" title={c ? `${noteName(m, s.notation)} · 노트 ${c.notes}개 · 맞힘 ${Math.round(c.acc * 100)}% · 평균 ${c.cents > 0 ? '+' : ''}${Math.round(c.cents)}센트` : `${noteName(m, s.notation)} · 이 곡에 없음`}>
                     <div
                       className={cn(
                         'flex h-14 w-full items-end justify-center rounded-md border pb-1 font-mono text-[10px] font-bold tabular',
@@ -594,7 +594,7 @@ function RangeSection({ cells }: { cells: RangeCell[] }) {
             <p className="mt-2 text-xs text-voice">특별히 약한 음이 없어요.</p>
           )}
         </div>
-        <div>
+        <div className="min-w-0 border-t border-border pt-5 lg:max-w-2xl">
           <h2 className="mb-3 text-sm font-semibold">내 음역 vs 원곡 음역</h2>
           {d.summary && ss.userLow !== null && ss.userHigh !== null ? (
             <RangeCompare
