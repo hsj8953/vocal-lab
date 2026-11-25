@@ -1198,7 +1198,7 @@ interface MicRuntime {
 }
 let mic: MicRuntime | null = null
 
-function detectPitch(buf: Float32Array, sr: number): { hz: number; clarity: number; level: number } {
+export function detectPitch(buf: Float32Array, sr: number): { hz: number; clarity: number; level: number } {
   const n = 1024
   let e = 0
   for (let i = 0; i < n; i++) e += buf[i] * buf[i]

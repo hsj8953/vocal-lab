@@ -141,6 +141,13 @@ export interface StudioState {
   fxBusy: number | null
   /** 저장 중 */
   exporting: boolean
+
+  /** 지금 열려 있는 곡이 내 곡 목록의 어떤 곡인지 */
+  librarySongId: string | null
+  /** 내 곡 목록이 바뀔 때마다 증가 */
+  libraryRev: number
+  /** 목록에서 여는 중인 곡 */
+  libraryOpening: string | null
 }
 
 export interface PracticeState {
@@ -249,6 +256,9 @@ export function createInitialState(): StudioState {
     fxCompare: 'tuned',
     fxBusy: null,
     exporting: false,
+    librarySongId: null,
+    libraryRev: 0,
+    libraryOpening: null,
   }
 }
 

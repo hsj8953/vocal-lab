@@ -754,8 +754,21 @@ function FxPanel() {
       {open ? (
         <div className="mt-2 space-y-4 text-xs">
           <FxGroup title="오토튠" hint="노트의 음으로 내 음을 맞춰요">
+            <Seg
+              label="보정 방식"
+              size="sm"
+              className="w-full"
+              value={fx.tuneMode}
+              onChange={(v) => set({ tuneMode: v })}
+              options={[
+                { value: 'note', label: '자연스럽게 (노트 단위)', title: '노트마다 평균적으로 어긋난 만큼만 옮겨요. 바이브레이션·꺾기는 그대로' },
+                { value: 'live', label: '오토튠 효과 (실시간)', title: '순간순간 따라가며 맞춰요. 빠르게 하면 로봇 느낌' },
+              ]}
+            />
             <FxSlider label="세기" value={fx.tune} min={0} max={1} step={0.05} fmt={pct} onChange={(v) => set({ tune: v })} />
-            <FxSlider label="속도" value={fx.tuneSpeed} min={0} max={250} step={10} fmt={(v) => (v === 0 ? '로봇' : `${v}ms`)} onChange={(v) => set({ tuneSpeed: v })} hint="작을수록 음에 딱 붙어요(로봇 느낌), 클수록 자연스러워요" />
+            {fx.tuneMode === 'live' ? (
+              <FxSlider label="속도" value={fx.tuneSpeed} min={0} max={250} step={10} fmt={(v) => (v <= 10 ? '로봇' : `${v}ms`)} onChange={(v) => set({ tuneSpeed: v })} hint="작을수록 음에 딱 붙어요(로봇 느낌), 클수록 자연스러워요" />
+            ) : null}
           </FxGroup>
           <FxGroup title="리버브" hint="공간의 울림">
             <Seg

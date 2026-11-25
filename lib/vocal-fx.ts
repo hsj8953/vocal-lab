@@ -18,8 +18,10 @@ export type HarmonyType = 'off' | 'up3' | 'down3' | 'both'
 export interface FxParams {
   /** 오토튠 세기 0~1 (0 = 끔) */
   tune: number
-  /** 오토튠 속도(ms) — 0이면 바로 붙는 로봇 느낌, 클수록 자연스러움 */
+  /** 오토튠 속도(ms) — 0이면 바로 붙는 로봇 느낌, 클수록 자연스러움 (실시간 방식에서만) */
   tuneSpeed: number
+  /** note: 노트마다 평균적으로 어긋난 만큼만 통째로 옮김 (자연스러움, 표현 유지) · live: 순간순간 따라가며 보정 (오토튠 효과) */
+  tuneMode: 'note' | 'live'
   /** 노이즈 게이트 0~1 */
   gate: number
   /** EQ (dB) */
@@ -47,6 +49,7 @@ export interface FxParams {
 export const FX_OFF: FxParams = {
   tune: 0,
   tuneSpeed: 80,
+  tuneMode: 'note',
   gate: 0,
   low: 0,
   mid: 0,
@@ -73,13 +76,13 @@ export const FX_PRESETS: FxPreset[] = [
   { id: 'raw', label: '원본', desc: '효과 없이 녹음 그대로', fx: FX_OFF },
   { id: 'clean', label: '깔끔한 녹음', desc: '잡음을 줄이고 또렷하게, 살짝 울림', fx: { ...FX_OFF, gate: 0.5, low: -2, mid: 2, high: 2, comp: 0.5, reverbType: 'room', reverb: 0.18 } },
   { id: 'karaoke', label: '노래방', desc: '넓은 울림과 에코', fx: { ...FX_OFF, gate: 0.4, mid: 1, comp: 0.6, reverbType: 'karaoke', reverb: 0.38, echo: 0.28, echoTime: 280, echoFeedback: 0.3 } },
-  { id: 'ballad', label: '발라드', desc: '살짝 음정 보정, 홀 울림', fx: { ...FX_OFF, tune: 0.5, tuneSpeed: 120, gate: 0.4, high: 3, comp: 0.5, reverbType: 'hall', reverb: 0.35, echo: 0.15, echoTime: 380, echoFeedback: 0.25 } },
-  { id: 'chorus', label: '풍성한 코러스', desc: '목소리 겹치기와 자동 화음', fx: { ...FX_OFF, tune: 0.6, tuneSpeed: 80, gate: 0.4, comp: 0.5, high: 2, reverbType: 'hall', reverb: 0.3, double: 0.5, harmony: 'up3', harmonyMix: 0.35 } },
-  { id: 'autotune', label: '오토튠 힙합', desc: '음에 딱 붙는 로봇 느낌', fx: { ...FX_OFF, tune: 1, tuneSpeed: 0, gate: 0.5, mid: 2, high: 2, comp: 0.7, reverbType: 'room', reverb: 0.2, echo: 0.15, echoTime: 220, echoFeedback: 0.2, double: 0.35 } },
+  { id: 'ballad', label: '발라드', desc: '티 안 나는 음정 보정, 홀 울림', fx: { ...FX_OFF, tune: 0.8, tuneMode: 'note', gate: 0.4, high: 1.5, comp: 0.5, reverbType: 'hall', reverb: 0.28 } },
+  { id: 'chorus', label: '풍성한 코러스', desc: '목소리 겹치기와 자동 화음', fx: { ...FX_OFF, tune: 0.8, tuneMode: 'note', gate: 0.4, comp: 0.5, high: 2, reverbType: 'hall', reverb: 0.3, double: 0.5, harmony: 'up3', harmonyMix: 0.35 } },
+  { id: 'autotune', label: '오토튠 힙합', desc: '음에 딱 붙는 로봇 느낌', fx: { ...FX_OFF, tune: 1, tuneMode: 'live', tuneSpeed: 0, gate: 0.5, mid: 2, high: 2, comp: 0.7, reverbType: 'room', reverb: 0.2, echo: 0.15, echoTime: 220, echoFeedback: 0.2, double: 0.35 } },
 ]
 
 /** 다시 계산이 필요한 값이 바뀌었는지 */
-export const renderKey = (p: FxParams) => [p.tune > 0 ? p.tune.toFixed(2) : 0, p.tune > 0 ? p.tuneSpeed : 0, p.gate.toFixed(2), p.double > 0 ? 1 : 0, p.harmony].join('|')
+export const renderKey = (p: FxParams) => [p.tune > 0 ? p.tune.toFixed(2) : 0, p.tune > 0 ? p.tuneMode : '', p.tune > 0 && p.tuneMode === 'live' ? p.tuneSpeed : 0, p.gate.toFixed(2), p.double > 0 ? 1 : 0, p.harmony].join('|')
 
 /* ------------------------------------------------------------------ */
 /* 음 높이 곡선 (연습 기록에서)                                            */
@@ -127,7 +130,20 @@ export function pitchCurve(session: SessionStats, t0: number, dur: number): Pitc
       for (let i = ia; i <= ib; i++) user[i] = ma + ((mb - ma) * (i - ia)) / Math.max(1, ib - ia)
     }
   })
+  fillGaps(user, 16)
   return { user, target, noteIdx }
+}
+
+/** 마이크가 음을 놓친 짧은 틈(maxHops × 5ms 이하)은 앞뒤 값으로 잇는다 — 보정이 껐다 켜졌다 하지 않게 */
+export function fillGaps(u: Float32Array, maxHops: number) {
+  let last = -1
+  for (let i = 0; i < u.length; i++) {
+    if (!Number.isFinite(u[i])) continue
+    if (last >= 0 && i - last > 1 && i - last <= maxHops + 1 && Math.abs(u[i] - u[last]) < 1.5) {
+      for (let k = last + 1; k < i; k++) u[k] = u[last] + ((u[i] - u[last]) * (k - last)) / (i - last)
+    }
+    last = i
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -204,33 +220,71 @@ export function psola(x: Float32Array, sr: number, f0At: (h: number) => number, 
     const f = f0At(Math.min(Math.floor(i / hopS), 1e9))
     return f > 60 && f < 1500 ? sr / f : sr / 200
   }
-  // 분석 위치: 음 높이 주기마다, 소리 있는 곳에서는 파형의 같은 자리(가장 높은 봉우리)에 맞춘다.
-  // 자리가 들쭉날쭉하면 붙인 조각끼리 위상이 어긋나 한 옥타브 아래 소리(거친 소리)가 생긴다.
   const voicedAt = (i: number) => f0At(Math.floor(i / hopS)) > 60
+  // 소수점 위치의 샘플 (Catmull-Rom 보간)
+  const at = (p: number) => {
+    const i = Math.floor(p)
+    if (i < 1 || i + 2 >= N) return i >= 0 && i < N ? x[i] : 0
+    const t = p - i
+    const a = x[i - 1]
+    const b = x[i]
+    const c = x[i + 1]
+    const d = x[i + 2]
+    return b + 0.5 * t * (c - a + t * (2 * a - 5 * b + 4 * c - d + t * (3 * (b - c) + d - a)))
+  }
+
+  // 분석 위치: 음 높이 주기마다. 소리 있는 곳에서는 바로 앞 조각과 파형이 가장 비슷한 자리를
+  // 소수점 단위까지 찾는다 (정수 자리로만 맞추면 주기마다 반 샘플씩 흔들려 거친 소리가 난다)
   const marks: number[] = []
   let t = 0
-  // 첫 소리 구간의 봉우리부터 시작
   while (t < N) {
     marks.push(t)
-    const P = Math.max(16, Math.round(period(t)))
+    const P = Math.max(16, period(t))
     let nx = t + P
+    const ti = Math.round(t)
     if (voicedAt(nx) && voicedAt(t)) {
-      const r = Math.round(P * 0.3)
-      let best = nx
+      const r = Math.round(P * 0.25)
+      const half = Math.round(P / 2)
+      const score = (c: number) => {
+        let num = 0
+        let e = 0
+        for (let j = -half; j <= half; j += 2) {
+          const a = ti + j
+          const bb = c + j
+          if (a < 0 || bb < 0 || bb >= N) continue
+          num += x[a] * x[bb]
+          e += x[bb] * x[bb]
+        }
+        return num / Math.sqrt(e + 1e-9)
+      }
+      let best = Math.round(nx)
       let bv = -Infinity
-      for (let i = Math.max(t + 8, nx - r); i <= Math.min(N - 1, nx + r); i++) {
-        if (x[i] > bv) {
-          bv = x[i]
-          best = i
+      const lo = Math.max(ti + 8, Math.round(nx) - r)
+      const hi = Math.min(N - 2 - half, Math.round(nx) + r)
+      for (let c = lo; c <= hi; c++) {
+        const v = score(c)
+        if (v > bv) {
+          bv = v
+          best = c
         }
       }
-      nx = best
+      // 포물선으로 소수점 자리 찾기
+      if (best > lo && best < hi) {
+        const s0 = score(best - 1)
+        const s2 = score(best + 1)
+        const den = s0 - 2 * bv + s2
+        const d = den < 0 ? (0.5 * (s0 - s2)) / den : 0
+        nx = best + Math.max(-0.5, Math.min(0.5, d))
+        // 앞 조각의 소수점 위치만큼 같이 옮긴다
+        nx += t - ti
+      } else nx = best + (t - ti)
     } else if (voicedAt(nx)) {
       // 소리가 시작되는 곳: 첫 주기 안의 봉우리로
-      let best = nx
+      const s0 = Math.round(nx)
+      let best = s0
       let bv = -Infinity
       const P2 = Math.max(16, Math.round(period(nx)))
-      for (let i = nx; i < Math.min(N, nx + P2); i++) {
+      for (let i = s0; i < Math.min(N, s0 + P2); i++) {
         if (x[i] > bv) {
           bv = x[i]
           best = i
@@ -238,25 +292,36 @@ export function psola(x: Float32Array, sr: number, f0At: (h: number) => number, 
       }
       nx = best
     }
+    if (nx <= t + 4) nx = t + P
     t = nx
   }
+
+  // 합성: 분석 조각을 하나씩 차례로 쓰고, 간격만 음 높이 비율만큼 줄이거나 늘린다.
+  // 합성 위치와 분석 위치가 반 주기 넘게 벌어졌을 때만 조각을 한 번 건너뛰거나 반복한다.
+  const nextOf = (i: number) => (i + 1 < marks.length ? marks[i + 1] - marks[i] : Math.max(16, period(marks[i])))
+  const prevOf = (i: number) => (i > 0 ? marks[i] - marks[i - 1] : nextOf(i))
   let k = 0
-  for (let ts = 0; ts < N; ) {
-    while (k + 1 < marks.length && Math.abs(marks[k + 1] - ts) <= Math.abs(marks[k] - ts)) k++
+  let ts = marks[0] ?? 0
+  while (ts < N && marks.length > 1 && k < marks.length) {
     const ta = marks[k]
-    const P = Math.max(16, Math.round(period(ta)))
+    const nextI = nextOf(k)
+    const prevI = prevOf(k)
     const h = Math.floor(ts / hopS)
-    const r = f0At(h) > 0 ? Math.max(0.5, Math.min(2, ratioAt(h))) : 1
-    const L = P
-    for (let j = -L; j <= L; j++) {
-      const si = ta + j
-      const di = Math.round(ts) + j
-      if (si < 0 || si >= N || di < 0 || di >= N) continue
-      const win = 0.5 + 0.5 * Math.cos((Math.PI * j) / (L + 1))
-      y[di] += x[si] * win
+    const r = f0At(h) > 0 && f0At(Math.floor(ta / hopS)) > 0 ? Math.max(0.5, Math.min(2, ratioAt(h))) : 1
+    const d0 = Math.max(0, Math.ceil(ts - prevI))
+    const d1 = Math.min(N - 1, Math.floor(ts + nextI))
+    for (let di = d0; di <= d1; di++) {
+      const j = di - ts
+      const L = j < 0 ? prevI : nextI
+      const win = 0.5 + 0.5 * Math.cos((Math.PI * j) / (L + 0.5))
+      y[di] += at(ta + j) * win
       w[di] += win
     }
-    ts += Math.max(8, P / r)
+    ts += Math.max(8, nextI / r)
+    let nk = k + 1
+    while (nk + 1 < marks.length && ts - marks[nk] > nextOf(nk) / 2) nk++
+    if (nk < marks.length && marks[nk] - ts > prevOf(nk) / 2) nk = k
+    k = nk
   }
   for (let i = 0; i < N; i++) y[i] = w[i] > 1e-3 ? y[i] / w[i] : 0
   // 끝부분이 모자라 생긴 아주 작은 창 가중치는 원래 소리로
@@ -331,16 +396,46 @@ export async function renderLayers(take: { data: Float32Array; sr: number }, cur
 
   // 오토튠 보정량 (반음, 5ms마다) — 목표 음과 2.5반음 넘게 다르면 다른 음을 부른 것으로 보고 손대지 않는다
   const corr = new Float32Array(nH)
-  if (p.tune > 0) {
-    const a = p.tuneSpeed <= 0 ? 1 : 1 - Math.exp(-(HOP * 1000) / p.tuneSpeed)
+  if (p.tune > 0 && p.tuneMode === 'note') {
+    // 노트마다: 가운데 부분에서 평균적으로 어긋난 만큼만 통째로 옮긴다 (비브라토·꺾기는 그대로)
+    const spans = new Map<number, { a: number; b: number }>()
+    for (let h = 0; h < nH; h++) {
+      const k = curve.noteIdx[h]
+      if (k < 0) continue
+      const sp = spans.get(k)
+      if (sp) sp.b = h
+      else spans.set(k, { a: h, b: h })
+    }
+    const want = new Float32Array(nH)
+    for (const { a, b } of spans.values()) {
+      const d: number[] = []
+      const lo = a + Math.floor((b - a) * 0.2)
+      const hi = b - Math.floor((b - a) * 0.2)
+      for (let h = lo; h <= hi; h++) if (Number.isFinite(curve.user[h]) && Number.isFinite(curve.target[h])) d.push(curve.target[h] - curve.user[h])
+      if (d.length < 6) continue
+      d.sort((x, y) => x - y)
+      const med = d[d.length >> 1]
+      if (Math.abs(med) > 2.5) continue
+      for (let h = a; h <= b; h++) want[h] = med * p.tune
+    }
+    // 노트가 바뀔 때 보정량이 튀지 않게 앞뒤로 부드럽게 (약 30ms)
+    const al = 1 - Math.exp(-5 / 30)
+    let c = 0
+    for (let h = 0; h < nH; h++) corr[h] = c += (want[h] - c) * al
+    c = 0
+    for (let h = nH - 1; h >= 0; h--) corr[h] = c += (corr[h] - c) * al
+  } else if (p.tune > 0) {
+    // 실시간 방식: 가장 빨라도 10ms에 걸쳐 따라간다 (계단 소리 방지)
+    const a = 1 - Math.exp(-(HOP * 1000) / Math.max(10, p.tuneSpeed))
+    const dec = 1 - Math.exp(-(HOP * 1000) / 30)
     let c = 0
     for (let h = 0; h < nH; h++) {
       const u = curve.user[h]
       const t = curve.target[h]
       let want = 0
       if (Number.isFinite(u) && Number.isFinite(t) && Math.abs(t - u) <= 2.5) want = (t - u) * p.tune
-      if (!Number.isFinite(u)) c = 0
-      else c += (want - c) * a
+      // 음을 못 잰 곳에서는 보정을 바로 끊지 않고 서서히 0으로
+      c += (want - c) * (Number.isFinite(u) ? a : dec)
       corr[h] = c
     }
   }

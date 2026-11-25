@@ -1,7 +1,9 @@
 'use client'
 
-import { AudioLines, FileMusic, FileText, Loader2, Mic2, Music2, Upload, X } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { AudioLines, Check, FileMusic, FileText, Library, Loader2, Mic2, Music2, Pencil, Play, Trash2, Upload, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { loadHistory, songKey } from '@/lib/history'
+import { listSongs, storageUsage, type LibSong } from '@/lib/library'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
@@ -17,6 +19,7 @@ const SLOTS: { kind: InputKind; title: string; desc: string; accept: string; req
 ]
 
 function fmtSize(n: number) {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}GB`
   return n > 1_000_000 ? `${(n / 1_000_000).toFixed(1)}MB` : `${Math.round(n / 1000)}KB`
 }
 
@@ -26,7 +29,9 @@ export function ImportView() {
   const canStart = !!s.inputs.original?.file || !!s.inputs.noteFile?.file
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl flex-1 gap-10 px-4 py-8 sm:px-6 lg:grid-cols-[1fr_minmax(0,520px)] lg:items-center lg:gap-16 lg:py-14">
+    <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">
+    <LibraryList />
+    <div className="grid w-full gap-10 lg:grid-cols-[1fr_minmax(0,520px)] lg:items-center lg:gap-16 lg:py-6">
       <div className="rise-in">
         <p className="font-mono text-xs tracking-[0.2em] text-voice">VOCAL·LAB</p>
         <h1 className="mt-4 text-balance text-4xl leading-[1.15] font-bold tracking-tight sm:text-5xl">
@@ -75,8 +80,161 @@ export function ImportView() {
           {running ? `${s.analysis.stage}… ${Math.round(s.analysis.ratio * 100)}%` : s.inputs.noteFile?.file ? '노트 불러와서 시작' : '멜로디 분석하고 시작'}
         </Button>
         {!canStart ? <p className="text-center text-xs text-muted-foreground">원곡 파일을 넣으면 시작할 수 있어요.</p> : null}
+        <p className="text-center text-[11px] text-muted-foreground">분석이 끝나면 내 곡 목록에 자동으로 저장돼요.</p>
       </div>
     </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* 내 곡 목록                                                            */
+/* ------------------------------------------------------------------ */
+
+const KIND_LABEL: Record<string, string> = { original: '원곡', mr: 'MR', vocal: '보컬', noteFile: '노트', lyrics: '가사' }
+
+function ago(t: number) {
+  const d = (Date.now() - t) / 1000
+  if (d < 60) return '방금'
+  if (d < 3600) return `${Math.floor(d / 60)}분 전`
+  if (d < 86400) return `${Math.floor(d / 3600)}시간 전`
+  if (d < 86400 * 30) return `${Math.floor(d / 86400)}일 전`
+  return new Date(t).toLocaleDateString()
+}
+
+function LibraryList() {
+  const { s } = useStudio()
+  const [songs, setSongs] = useState<LibSong[] | null>(null)
+  const [usage, setUsage] = useState<{ used: number; quota: number } | null>(null)
+  useEffect(() => {
+    let alive = true
+    void listSongs().then((l) => alive && setSongs(l))
+    void storageUsage().then((u) => alive && setUsage(u))
+    return () => {
+      alive = false
+    }
+  }, [s.libraryRev])
+  if (!songs || !songs.length) return null
+  return (
+    <section className="rise-in mb-10" aria-labelledby="lib-title">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="lib-title" className="flex items-center gap-2 text-lg font-bold">
+          <Library className="size-5 text-voice" /> 내 곡 <span className="font-mono text-sm font-normal text-muted-foreground">{songs.length}</span>
+        </h2>
+        {usage ? (
+          <span className="text-[11px] text-muted-foreground">
+            이 브라우저에 저장 · {fmtSize(usage.used)} 사용{usage.quota ? ` / 약 ${fmtSize(usage.quota)}` : ''}
+          </span>
+        ) : null}
+      </div>
+      <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {songs.map((x) => (
+          <SongCard key={x.id} song={x} />
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function SongCard({ song }: { song: LibSong }) {
+  const { s, a } = useStudio()
+  const [mode, setMode] = useState<'view' | 'rename' | 'delete'>('view')
+  const [name, setName] = useState(song.title)
+  const hist = typeof window === 'undefined' ? [] : loadHistory(songKey(song.projTitle, song.duration))
+  const best = hist.length ? Math.max(...hist.map((h) => h.score)) : null
+  const lastAt = hist.length ? hist[hist.length - 1].at : null
+  const opening = s.libraryOpening === song.id
+  const busy = s.analysis.status === 'running' || !!s.libraryOpening
+  const current = s.librarySongId === song.id && s.project.real
+  const key = song.settings.keyShift ?? 0
+  return (
+    <li className={cn('flex flex-col rounded-2xl border bg-card p-4', current ? 'border-voice/50' : 'border-border')}>
+      {mode === 'rename' ? (
+        <form
+          className="flex gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void a.renameLibrarySong(song.id, name)
+            setMode('view')
+          }}
+        >
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            aria-label="곡 이름"
+            className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background/60 px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <Button type="submit" size="icon-sm" aria-label="이름 저장">
+            <Check />
+          </Button>
+          <Button type="button" size="icon-sm" variant="ghost" aria-label="취소" onClick={() => setMode('view')}>
+            <X />
+          </Button>
+        </form>
+      ) : (
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[15px] font-semibold" title={song.title}>
+              {song.title}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {Math.floor(song.duration / 60)}:{String(Math.round(song.duration % 60)).padStart(2, '0')} · 키 {key > 0 ? `+${key}` : key} · {fmtSize(song.bytes)}
+            </p>
+          </div>
+          {current ? <span className="shrink-0 rounded bg-voice/15 px-1.5 py-0.5 text-[10px] font-semibold text-voice">열려 있음</span> : null}
+        </div>
+      )}
+      <div className="mt-2.5 flex flex-wrap gap-1">
+        {(['original', 'mr', 'vocal', 'noteFile', 'lyrics'] as const).map((k) =>
+          song.files[k] ? (
+            <span key={k} className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground" title={song.files[k]!.name}>
+              {KIND_LABEL[k]}
+            </span>
+          ) : null,
+        )}
+      </div>
+      <p className="mt-2.5 text-xs text-muted-foreground">
+        {lastAt ? (
+          <>
+            마지막 연습 {ago(lastAt)} · 최고 <b className="font-mono text-foreground">{best}</b>점 · {hist.length}번
+          </>
+        ) : (
+          <>아직 연습 기록이 없어요 · 열어 본 지 {ago(song.opened)}</>
+        )}
+      </p>
+      {mode === 'delete' ? (
+        <div className="mt-3 flex items-center gap-2 rounded-lg bg-miss/10 p-2 text-xs">
+          <span className="flex-1 text-miss">목록에서 지울까요?</span>
+          <Button
+            size="xs"
+            variant="destructive"
+            onClick={() => {
+              void a.deleteLibrarySong(song.id)
+              setMode('view')
+            }}
+          >
+            지우기
+          </Button>
+          <Button size="xs" variant="ghost" onClick={() => setMode('view')}>
+            취소
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-3 flex items-center gap-1.5">
+          <Button size="sm" className="flex-1" disabled={busy} onClick={() => void a.openLibrarySong(song.id)}>
+            {opening ? <Loader2 className="animate-spin" /> : <Play />}
+            {opening ? `${s.analysis.stage || '여는 중'}… ${Math.round(s.analysis.ratio * 100)}%` : '열기'}
+          </Button>
+          <Button size="icon-sm" variant="ghost" aria-label={`${song.title} 이름 바꾸기`} onClick={() => setMode('rename')} disabled={busy}>
+            <Pencil />
+          </Button>
+          <Button size="icon-sm" variant="ghost" aria-label={`${song.title} 지우기`} onClick={() => setMode('delete')} disabled={busy}>
+            <Trash2 />
+          </Button>
+        </div>
+      )}
+    </li>
   )
 }
 

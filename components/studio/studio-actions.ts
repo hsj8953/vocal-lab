@@ -6,8 +6,9 @@ import { parseLrc } from '@/lib/lrc'
 import { attachLyrics, replaceLineTexts } from '@/lib/lyric-align'
 import { buildReport } from '@/lib/report'
 import { saveHistory, songKey } from '@/lib/history'
+import * as library from '@/lib/library'
 import { FX_PRESETS, createVocalChain, layerGains, pitchCurve, renderKey, renderLayers, encodeWav, type FxParams, type RenderedLayers, type VocalChain } from '@/lib/vocal-fx'
-import type { LyricLine } from './studio-types'
+import type { LyricLine, Lyrics } from './studio-types'
 import type { Notation } from '@/lib/music'
 import {
   DEMO_ABILITY,
@@ -524,12 +525,12 @@ export function createActions(env: ActionEnv) {
 
   /* ------------------------------ 분석 ------------------------------ */
 
-  const analyze = async (goStudio: boolean, opt: { useEdits?: boolean } = {}) => {
+  const analyze = async (goStudio: boolean, opt: { useEdits?: boolean } = {}): Promise<boolean> => {
     const st = sRef.current
     const { inputs, analysis } = st
     if (!inputs.original && !inputs.noteFile && !inputs.mr) {
       notify('먼저 원곡 파일을 넣어 주세요.')
-      return
+      return false
     }
     pause()
     set({ analysis: { ...analysis, status: 'running', stage: '준비 중', ratio: 0.02, error: undefined } })
@@ -551,8 +552,14 @@ export function createActions(env: ActionEnv) {
           prog,
         )
         const isNew = goStudio || !st.project.real
-        // 새 곡이면 이 곡에 저장해 둔 가사로 바꾼다 (가사 파일을 같이 넣었으면 그걸 유지)
-        const savedLyrics = isNew && !inputs.lyrics ? await engine.realLoadLyrics() : undefined
+        // 새 곡이면 이 곡에 저장해 둔 가사로 바꾼다.
+        // 가사 파일을 같이 넣었으면: 같은 파일을 고쳐 둔 가사가 있으면 그걸, 아니면 넣은 파일을 쓴다
+        let savedLyrics: Lyrics | null | undefined = undefined
+        if (isNew) {
+          const sv = (await engine.realLoadLyrics()) as Lyrics | null
+          if (!inputs.lyrics) savedLyrics = sv
+          else if (sv && sv.name === inputs.lyrics.name && sv.lines?.length) savedLyrics = sv
+        }
         playerRef.current?.seek(0)
         live.time = 0
         live.trace = []
@@ -593,7 +600,8 @@ export function createActions(env: ActionEnv) {
           recorder.reset()
           live.noteScore.clear()
         }
-        return
+        if (goStudio) void saveToLibrary(res.duration)
+        return true
       }
 
       // 데모 곡 (목업 엔진)
@@ -632,10 +640,12 @@ export function createActions(env: ActionEnv) {
         view: goStudio ? 'studio' : p.view,
         railTab: goStudio ? 'analysis' : p.railTab,
       }))
+      return true
     } catch (e) {
       console.error(e)
       set((p) => ({ analysis: { ...p.analysis, status: 'error', stage: '오류', error: e instanceof Error ? e.message : '분석에 실패했어요.' } }))
       notify(e instanceof Error ? e.message : '분석에 실패했어요.')
+      return false
     }
   }
 
@@ -654,7 +664,95 @@ export function createActions(env: ActionEnv) {
 
   const nudgeMr = (sec: number) => {
     const r = engine.realNudgeMr(sec)
-    if (r) set({ align: { status: 'done', result: r } })
+    if (r) {
+      set({ align: { status: 'done', result: r } })
+      const id = sRef.current.librarySongId
+      if (id) void library.patchSong(id, (x) => ({ ...x, settings: { ...x.settings, mrOffsetMs: r.offsetMs } }))
+    }
+  }
+
+  /* ------------------------------ 내 곡 목록 ------------------------------ */
+
+  /** 곡을 불러와 분석이 끝나면 목록에 저장 (같은 원곡이면 덮어씀) */
+  const saveToLibrary = async (duration: number) => {
+    const st = sRef.current
+    const main = st.inputs.original ?? st.inputs.noteFile ?? st.inputs.mr
+    if (!main?.file) return
+    const id = library.songIdOf(main)
+    const files: library.LibSong['files'] = {}
+    let bytes = 0
+    for (const k of ['original', 'mr', 'vocal', 'noteFile', 'lyrics'] as const) {
+      const f = st.inputs[k]?.file
+      if (f) {
+        files[k] = library.toLibFile(f)
+        bytes += f.size
+      }
+    }
+    const prev = await library.getSong(id)
+    const now = Date.now()
+    try {
+      await library.putSong({
+        id,
+        title: prev?.title ?? stripExt(main.name),
+        projTitle: stripExt((st.inputs.original ?? st.inputs.mr ?? main).name),
+        duration,
+        created: prev?.created ?? now,
+        updated: now,
+        opened: now,
+        bytes,
+        files,
+        settings: prev?.settings ?? { keyShift: st.keyShift },
+      })
+      set((p) => ({ librarySongId: id, libraryRev: p.libraryRev + 1 }))
+      if (!prev) {
+        notify('내 곡 목록에 저장했어요. 다음엔 곡 불러오기 화면에서 바로 열 수 있어요.')
+        void library.requestPersist()
+      }
+    } catch {
+      notify('저장 공간이 부족해서 내 곡 목록에 저장하지 못했어요.')
+    }
+  }
+
+  /** 목록의 곡 열기 — 파일을 넣고 분석(저장된 결과를 다시 씀)한 뒤 키·MR 위치를 되돌린다 */
+  const openLibrarySong = async (id: string) => {
+    if (sRef.current.analysis.status === 'running') return
+    const song = await library.getSong(id)
+    if (!song) return notify('곡을 찾을 수 없어요.')
+    set({ libraryOpening: id })
+    try {
+      pause()
+      const inputs: StudioState['inputs'] = {}
+      for (const [k, f] of Object.entries(song.files) as [InputKind, library.LibFile][]) {
+        const file = library.fromLibFile(f)
+        inputs[k] = { name: file.name, size: file.size, file }
+      }
+      sRef.current = { ...sRef.current, inputs }
+      set({ inputs, lyrics: null })
+      if (inputs.lyrics?.file) await loadLyrics(inputs.lyrics.file, true)
+      if (!(await analyze(true))) return
+      set({ keyShift: clamp(song.settings.keyShift ?? 0, -7, 7), librarySongId: id })
+      const want = song.settings.mrOffsetMs
+      // 화면 상태는 아직 갱신 전일 수 있어서 엔진에서 직접 읽는다
+      const al = (engine.realSong() as { mrAlign?: { offset: number } | null }).mrAlign
+      const cur = al ? Math.round(al.offset * 1000) : undefined
+      if (want !== undefined && cur !== undefined && Math.abs(want - cur) >= 1) nudgeMr((want - cur) / 1000)
+      void library.patchSong(id, (x) => ({ ...x, opened: Date.now() }))
+    } finally {
+      set((p) => ({ libraryOpening: null, libraryRev: p.libraryRev + 1 }))
+    }
+  }
+
+  const renameLibrarySong = async (id: string, title: string) => {
+    const t = title.trim()
+    if (!t) return
+    await library.patchSong(id, (x) => ({ ...x, title: t }))
+    set((p) => ({ libraryRev: p.libraryRev + 1 }))
+  }
+
+  const deleteLibrarySong = async (id: string) => {
+    await library.deleteSong(id)
+    set((p) => ({ libraryRev: p.libraryRev + 1, librarySongId: p.librarySongId === id ? null : p.librarySongId }))
+    notify('목록에서 지웠어요. 편집한 노트와 가사 기록은 남아 있어서, 같은 파일을 다시 넣으면 돌아와요.')
   }
 
   /* 가사 (.lrc) */
@@ -668,12 +766,12 @@ export function createActions(env: ActionEnv) {
     notify(`가사 ${lines.filter((l) => l.text).length}줄을 불러왔어요.`)
     return true
   }
-  const loadLyrics = async (file: File) => {
+  const loadLyrics = async (file: File, quiet = false) => {
     try {
       const lines = parseLrc(await file.text())
       if (!lines.length) throw new Error('시간 정보([mm:ss.xx])가 있는 LRC 가사가 아니에요.')
       set({ lyrics: { name: file.name, lines, offset: 0 } })
-      notify(`가사 ${lines.filter((l) => l.text).length}줄을 불러왔어요.`)
+      if (!quiet) notify(`가사 ${lines.filter((l) => l.text).length}줄을 불러왔어요.`)
     } catch (e) {
       set((p) => {
         const inputs = { ...p.inputs }
@@ -838,7 +936,15 @@ export function createActions(env: ActionEnv) {
     },
 
     /* 키 · 음역 */
-    setKey: (keyShift: number) => set({ keyShift: clamp(keyShift, -7, 7) }),
+    setKey: (keyShift: number) => {
+      const k = clamp(keyShift, -7, 7)
+      set({ keyShift: k })
+      const id = sRef.current.librarySongId
+      if (id && sRef.current.project.real) void library.patchSong(id, (x) => ({ ...x, settings: { ...x.settings, keyShift: k } }))
+    },
+    openLibrarySong,
+    renameLibrarySong,
+    deleteLibrarySong,
     setOctaveMode: (octaveMode: OctaveMode) => set({ octaveMode }),
     setMicPref: (micPref: 'auto' | 'demo') => set({ micPref }),
     nudgeRange,
