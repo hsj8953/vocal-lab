@@ -109,6 +109,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     player.onEnded(() => {
       live.current.playing = false
       setS((p) => ({ ...p, playing: false }))
+      if (sRef.current.practice.phase === 'running') a.finishPractice()
     })
     const off = engine.onPitch((f) => a.handlePitch(f))
     let raf = 0
@@ -116,6 +117,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       const l = live.current
       l.playing = player.isPlaying()
       l.time = player.getTime() + sRef.current.syncMs / 1000
+      const st = sRef.current
+      if (l.playing) {
+        // 연습: 마지막 노트가 끝나면 자동으로 결과로
+        if (st.practice.phase === 'running' && l.time >= st.practice.t1) a.finishPractice()
+        // 소절 반복
+        else if (st.loop && st.view === 'studio' && l.time >= st.loop.b + 0.4) a.seek(Math.max(0, st.loop.a - 0.3))
+      }
       subs.current.forEach((cb) => cb(now))
       raf = requestAnimationFrame(loop)
     }
@@ -261,8 +269,22 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    playerRef.current?.setVolume(s.muted ? 0 : s.volume)
-  }, [s.volume, s.muted])
+    // 결과 화면에서 '반주 끄기'면 내 목소리만 들린다
+    const off = s.muted || (s.view === 'result' && !s.resultMr)
+    playerRef.current?.setVolume(off ? 0 : s.volume)
+  }, [s.volume, s.muted, s.view, s.resultMr])
+
+  /* 녹음한 내 목소리는 결과 화면에서만 들린다 */
+  useEffect(() => {
+    playerRef.current?.setTakeVolume(s.view === 'result' ? s.takeVolume : 0)
+  }, [s.view, s.takeVolume])
+
+  /* 화면을 바꾸면 재생을 멈춘다 (결과 ↔ 스튜디오) */
+  const prevView = useRef(s.view)
+  useEffect(() => {
+    if (prevView.current !== s.view && sRef.current.practice.phase === 'idle' && !sRef.current.loop) a.pause()
+    prevView.current = s.view
+  }, [s.view, a])
 
   /* 연습 기록 스냅샷 */
   useEffect(() => {

@@ -178,6 +178,8 @@ function StudioView() {
           <LiveHud />
           <LyricsOverlay />
           <MeasureBanner />
+          <PracticeOverlay />
+          <LoopBanner />
         </div>
         <Transport />
       </div>
@@ -214,6 +216,45 @@ function StudioView() {
           </Button>
         </div>
       </aside>
+    </div>
+  )
+}
+
+/** 연습 시작 카운트다운 */
+function PracticeOverlay() {
+  const { s, a } = useStudio()
+  if (s.practice.phase !== 'countdown') return null
+  return (
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-stage/70 backdrop-blur-[2px]" role="status" aria-live="assertive">
+      <span key={s.practice.count} className="rise-in font-mono text-8xl leading-none font-bold text-voice tabular">
+        {s.practice.count}
+      </span>
+      <p className="text-sm font-medium">반주가 나오면 따라 불러 주세요</p>
+      <p className="text-xs text-muted-foreground">이어폰을 끼면 더 정확해요 · 곡이 끝나면 결과가 자동으로 나와요</p>
+      <Button size="sm" variant="ghost" onClick={a.cancelPractice}>
+        취소
+      </Button>
+    </div>
+  )
+}
+
+/** 소절 반복 중 표시 */
+function LoopBanner() {
+  const { s, a } = useStudio()
+  if (!s.loop || s.practice.phase !== 'idle') return null
+  const fmt = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`
+  return (
+    <div className="absolute top-3 right-3 z-10 flex max-w-[calc(100%-1.5rem)] justify-end">
+      <div className="flex items-center gap-3 rounded-full border border-voice/50 bg-stage/90 py-1.5 pr-1.5 pl-4 text-sm backdrop-blur" role="status">
+        <span className="font-medium text-voice">소절 반복 중</span>
+        <span className="font-mono text-xs text-muted-foreground tabular">
+          {fmt(s.loop.a)}–{fmt(s.loop.b)}
+        </span>
+        {s.loop.label ? <span className="max-w-[12rem] truncate text-xs text-muted-foreground">‘{s.loop.label}’</span> : null}
+        <Button size="xs" variant="secondary" onClick={a.clearLoop}>
+          반복 끄기
+        </Button>
+      </div>
     </div>
   )
 }

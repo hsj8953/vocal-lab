@@ -4,6 +4,8 @@ import type { AnalysisOptions, CrepeModel, Note, OctaveMode, PitchFrame, PitchMo
 import { clamp } from '@/lib/music'
 import { parseLrc } from '@/lib/lrc'
 import { attachLyrics, replaceLineTexts } from '@/lib/lyric-align'
+import { buildReport } from '@/lib/report'
+import { saveHistory, songKey } from '@/lib/history'
 import type { LyricLine } from './studio-types'
 import type { Notation } from '@/lib/music'
 import {
@@ -57,6 +59,21 @@ export function createActions(env: ActionEnv) {
     live.time = next + syncSec()
   }
 
+  /* 연습 녹음: 재생 중인 동안만 마이크 소리를 모은다 */
+  let takeSegs: engine.TakeSegment[] = []
+  let taking = false
+  const takeTime = () => (playerRef.current?.getTime() ?? 0) + syncSec() - sRef.current.micLatencyMs / 1000
+  const beginTake = () => {
+    if (taking) return
+    taking = engine.startTake(takeTime)
+  }
+  const endTake = () => {
+    if (!taking) return
+    taking = false
+    const seg = engine.stopTake()
+    if (seg) takeSegs.push(seg)
+  }
+
   const play = async () => {
     const p = playerRef.current
     if (!p) return
@@ -68,8 +85,10 @@ export function createActions(env: ActionEnv) {
     await p.play()
     live.playing = true
     set({ playing: true })
+    if (sRef.current.practice.phase === 'running') beginTake()
   }
   const pause = () => {
+    endTake()
     playerRef.current?.pause()
     live.playing = false
     set({ playing: false })
@@ -79,7 +98,7 @@ export function createActions(env: ActionEnv) {
 
   /* ------------------------------ 마이크 ------------------------------ */
 
-  const startMicNow = async () => {
+  const startMicNow = async (): Promise<boolean> => {
     const st = sRef.current
     try {
       const res = await engine.startMic({
@@ -97,8 +116,10 @@ export function createActions(env: ActionEnv) {
       live.micOn = true
       set({ mic: { on: true, mode: res.mode } })
       if (res.fellBack) notify('마이크를 사용할 수 없어 데모 보컬(시뮬레이션)로 전환했어요.')
+      return true
     } catch (e) {
       notify(e instanceof Error ? e.message : '마이크를 켤 수 없어요. 브라우저의 마이크 권한을 확인해 주세요.')
+      return false
     }
   }
   const stopMicNow = () => {
@@ -148,13 +169,15 @@ export function createActions(env: ActionEnv) {
       live.targetNoteId = target?.id ?? null
       return
     }
-    recorder.pushUser(frame.midi)
+    // 결과 화면에서 녹음을 다시 들을 때는 기록하지 않는다 (스피커 소리가 마이크로 들어가므로)
+    const recording = st.view === 'studio'
+    if (recording) recorder.pushUser(frame.midi)
     if (target) {
       const shown = target.midi + live.shift
       const cmp = engine.compareFrame(shown, frame.midi)
       live.cmp = cmp
       live.targetNoteId = target.id
-      recorder.push(target, shown, cmp, t)
+      if (recording) recorder.push(target, shown, cmp, t, frame.level)
       const sc = live.noteScore.get(target.id) ?? [0, 0, 0]
       sc[cmp.tier === 'great' ? 0 : cmp.tier === 'ok' ? 1 : 2]++
       live.noteScore.set(target.id, sc)
@@ -174,6 +197,103 @@ export function createActions(env: ActionEnv) {
     live.trace = []
     live.noteScore.clear()
     set({ session: EMPTY_SESSION, sessionIsSample: false })
+  }
+
+  /* ------------------------------ 연습 모드 ------------------------------ */
+
+  let countTimer: ReturnType<typeof setInterval> | undefined
+  const practiceRange = () => {
+    const st = sRef.current
+    const ns = st.notes
+    const dur = st.project.duration
+    if (!ns.length) return { t0: 0, t1: dur }
+    const first = Math.min(...ns.map((n) => n.start))
+    const last = Math.max(...ns.map((n) => n.start + n.dur))
+    // 전주가 길면 첫 노트 4초 전부터, 마지막 노트 2.5초 뒤에 끝낸다
+    return { t0: first > 6 ? first - 4 : 0, t1: Math.min(dur, last + 2.5) }
+  }
+
+  const startPractice = async () => {
+    const st = sRef.current
+    if (st.analysis.status === 'running') return notify('곡을 분석하는 중이에요. 끝나면 시작할 수 있어요.')
+    if (st.bufferStatus !== 'ready') return notify('음원을 준비하는 중이에요. 잠시 후 다시 눌러 주세요.')
+    if (st.measure.step !== 'idle') return
+    if (!st.notes.length) return notify('노트가 없어서 연습을 시작할 수 없어요.')
+    pause()
+    if (st.view !== 'studio') set({ view: 'studio' })
+    if (!sRef.current.mic.on && !(await startMicNow())) return
+    resetSession()
+    takeSegs = []
+    playerRef.current?.loadTake(null)
+    const { t0, t1 } = practiceRange()
+    seek(t0)
+    set({ loop: null, takeAvailable: false, practice: { phase: 'countdown', count: 3, t0, t1 } })
+    clearInterval(countTimer)
+    countTimer = setInterval(() => {
+      const pr = sRef.current.practice
+      if (pr.phase !== 'countdown') return clearInterval(countTimer)
+      if (pr.count > 1) return set({ practice: { ...pr, count: pr.count - 1 } })
+      clearInterval(countTimer)
+      set({ practice: { ...pr, phase: 'running', count: 0 } })
+      sRef.current = { ...sRef.current, practice: { ...pr, phase: 'running', count: 0 } }
+      void play()
+    }, 1000)
+  }
+
+  const cancelPractice = () => {
+    clearInterval(countTimer)
+    set({ practice: { phase: 'idle', count: 0, t0: 0, t1: 0 } })
+  }
+
+  /** 연습 끝 — 리포트를 만들고 기록을 저장한 뒤 결과 화면으로 */
+  const finishPractice = () => {
+    const st = sRef.current
+    if (st.practice.phase === 'idle') return
+    if (st.practice.phase === 'countdown') return cancelPractice()
+    // 화면 갱신 전에 다시 불려도 한 번만 처리되도록 바로 표시
+    sRef.current = { ...st, practice: { phase: 'idle', count: 0, t0: 0, t1: 0 } }
+    pause()
+    const end = Math.max(st.practice.t0, (playerRef.current?.getTime() ?? st.practice.t1) + syncSec())
+    const span = { t0: st.practice.t0, t1: Math.min(st.practice.t1, end) }
+    const session = recorder.snapshot()
+    const report = buildReport({
+      session,
+      notes: st.notes,
+      shift: live.shift,
+      userRange: st.userRange,
+      origAt: st.project.real ? engine.realOrigPitchAt : undefined,
+      span,
+      realMic: st.mic.mode === 'live',
+    })
+    if (report.enough) saveHistory(songKey(st.project.title, st.project.duration), st.keyShift, report)
+    const segs = takeSegs
+    takeSegs = []
+    playerRef.current?.loadTake(segs.length ? segs : null)
+    set((p) => ({
+      practice: { phase: 'idle', count: 0, t0: 0, t1: 0 },
+      practiceSpan: span,
+      session,
+      sessionIsSample: false,
+      takeAvailable: segs.length > 0,
+      historyRev: p.historyRev + 1,
+      view: 'result',
+    }))
+    if (!report.enough) notify('부른 부분이 짧아서 기록에는 저장하지 않았어요.')
+  }
+
+  /* 소절 반복 */
+  const setLoop = (a: number, b: number, label?: string) => {
+    set({ loop: { a, b, label }, view: 'studio' })
+    seek(Math.max(0, a - 0.3))
+    void play()
+  }
+  const clearLoop = () => set({ loop: null })
+
+  /** 결과 화면에서 t 조금 앞부터 듣기 */
+  const listenFrom = (t: number) => {
+    pause()
+    seek(Math.max(0, t - 1))
+    void play()
   }
 
   /* ------------------------------ 음역 측정 ------------------------------ */
@@ -556,6 +676,14 @@ export function createActions(env: ActionEnv) {
     handlePitch,
     flushSession,
     resetSession,
+    startPractice,
+    cancelPractice,
+    finishPractice,
+    setLoop,
+    clearLoop,
+    listenFrom,
+    setTakeVolume: (v: number) => set({ takeVolume: clamp(v, 0, 1) }),
+    setResultMr: (resultMr: boolean) => set({ resultMr }),
 
     /* 편집 */
     setSelection: (ids: string[]) => set({ selection: ids }),

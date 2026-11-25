@@ -1,6 +1,6 @@
 'use client'
 
-import { Pause, Play, RotateCcw, RotateCw } from 'lucide-react'
+import { Mic, Pause, Play, RotateCcw, RotateCw, Square } from 'lucide-react'
 import { useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { fmtTime, noteName } from '@/lib/music'
@@ -48,6 +48,8 @@ export function Transport() {
           </Button>
         </div>
 
+        <PracticeButton />
+
         <div className="font-mono text-[13px] tabular">
           <span ref={timeEl} className="text-foreground">
             0:00.0
@@ -82,5 +84,34 @@ export function Transport() {
         </div>
       </div>
     </div>
+  )
+}
+
+/** 연습 시작 / 연습 중 표시 / 끝내기 */
+function PracticeButton() {
+  const { s, a } = useStudio()
+  const ph = s.practice.phase
+  if (ph === 'running')
+    return (
+      <div className="flex items-center gap-2">
+        <span className="flex items-center gap-1.5 text-xs font-semibold text-miss" role="status">
+          <span className="size-2 animate-pulse rounded-full bg-miss" /> 연습 중
+        </span>
+        <Button type="button" size="sm" variant="outline" onClick={a.finishPractice} title="지금까지 부른 걸로 결과 보기">
+          <Square className="size-3.5 fill-current" /> 끝내고 결과 보기
+        </Button>
+      </div>
+    )
+  return (
+    <Button
+      type="button"
+      size="sm"
+      onClick={() => void a.startPractice()}
+      disabled={ph === 'countdown' || s.bufferStatus !== 'ready' || s.analysis.status === 'running'}
+      className="bg-voice font-semibold text-background hover:bg-voice/90"
+      title="처음부터 따라 부르고, 끝나면 분석 결과를 보여 줘요"
+    >
+      <Mic /> {ph === 'countdown' ? '곧 시작해요' : '연습 시작'}
+    </Button>
   )
 }

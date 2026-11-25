@@ -114,6 +114,28 @@ export interface StudioState {
 
   session: SessionStats
   sessionIsSample: boolean
+
+  /** 연습 모드 — 카운트다운 후 곡 끝까지 부르면 결과 화면으로 */
+  practice: PracticeState
+  /** 마지막 연습 구간 (결과 분석 범위) */
+  practiceSpan: { t0: number; t1: number } | null
+  /** 마지막 연습에서 녹음한 내 목소리가 있는지 */
+  takeAvailable: boolean
+  /** 결과 화면에서 들을 내 목소리 볼륨 0~1 */
+  takeVolume: number
+  /** 결과 화면에서 반주도 같이 들을지 */
+  resultMr: boolean
+  /** 연습 기록이 저장될 때마다 바뀐다 (결과 화면 기록 다시 읽기용) */
+  historyRev: number
+  /** 소절 반복 구간 */
+  loop: { a: number; b: number; label?: string } | null
+}
+
+export interface PracticeState {
+  phase: 'idle' | 'countdown' | 'running'
+  count: number
+  t0: number
+  t1: number
 }
 
 export interface TracePoint {
@@ -203,6 +225,13 @@ export function createInitialState(): StudioState {
     micPref: 'auto',
     session: sample,
     sessionIsSample: true,
+    practice: { phase: 'idle', count: 0, t0: 0, t1: 0 },
+    practiceSpan: null,
+    takeAvailable: false,
+    takeVolume: 0.9,
+    resultMr: true,
+    historyRev: 0,
+    loop: null,
   }
 }
 

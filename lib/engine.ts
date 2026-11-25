@@ -636,6 +636,8 @@ export interface NoteResult {
   orig: number
   /** [노트 시작부터의 시간(초), 센트 차이] — 습관 분석용 */
   samples: [number, number][]
+  /** samples와 같은 순서의 마이크 소리 크기 (RMS, 상대값) */
+  levels?: number[]
 }
 
 export interface SessionStats {
@@ -654,7 +656,7 @@ export interface SessionStats {
 }
 
 export interface Recorder {
-  push: (note: Note, shownMidi: number, cmp: Compare, t: number) => void
+  push: (note: Note, shownMidi: number, cmp: Compare, t: number, level?: number) => void
   pushUser: (midi: number) => void
   snapshot: () => SessionStats
   reset: () => void
@@ -678,7 +680,7 @@ export function createRecorder(): Recorder {
     }
   }
   return {
-    push(note, shownMidi, cmp, t) {
+    push(note, shownMidi, cmp, t, level) {
       acc.total++
       acc[cmp.tier]++
       acc.absSum += Math.abs(cmp.cents)
@@ -686,13 +688,16 @@ export function createRecorder(): Recorder {
       if (cmp.octaveOff !== 0) acc.oct++
       let nr = acc.notes.get(note.id)
       if (!nr) {
-        nr = { id: note.id, start: note.start, dur: note.dur, midi: shownMidi, lyric: note.lyric, great: 0, ok: 0, off: 0, meanCents: 0, orig: note.midi, samples: [], sum: 0, n: 0 }
+        nr = { id: note.id, start: note.start, dur: note.dur, midi: shownMidi, lyric: note.lyric, great: 0, ok: 0, off: 0, meanCents: 0, orig: note.midi, samples: [], levels: [], sum: 0, n: 0 }
         acc.notes.set(note.id, nr)
       }
       nr[cmp.tier]++
       nr.sum += cmp.cents
       nr.n++
-      if (cmp.octaveOff === 0 && nr.samples.length < 2000) nr.samples.push([t - note.start, cmp.cents])
+      if (cmp.octaveOff === 0 && nr.samples.length < 2000) {
+        nr.samples.push([t - note.start, cmp.cents])
+        nr.levels!.push(level ?? 0)
+      }
       const bk = Math.floor(t / 2)
       let b = acc.buckets.get(bk)
       if (!b) {
@@ -716,7 +721,7 @@ export function createRecorder(): Recorder {
         octaveFrames: acc.oct,
         userLow: acc.low,
         userHigh: acc.high,
-        perNote: [...acc.notes.values()].map((n) => ({ ...n, meanCents: n.n ? n.sum / n.n : 0 })).sort((a, b) => a.start - b.start),
+        perNote: [...acc.notes.values()].map((n) => ({ ...n, samples: [...n.samples], levels: [...(n.levels ?? [])], meanCents: n.n ? n.sum / n.n : 0 })).sort((a, b) => a.start - b.start),
         timeline: [...acc.buckets.values()].sort((a, b) => a.start - b.start),
       }
     },
@@ -745,7 +750,7 @@ export function buildSampleSession(notes: Note[], shift: number, ability: UserRa
     for (let i = 0; i < frames; i++) {
       const t = n.start + (i / frames) * n.dur
       const user = shown + bias + gauss() * 0.14 - over * 0.65 - under * 0.4 + (i < 3 ? -0.35 : 0)
-      rec.push(n, shown, compareFrame(shown, user), t)
+      rec.push(n, shown, compareFrame(shown, user), t, 0.1 * (1 - (0.35 * i) / frames))
       rec.pushUser(user)
     }
   }
@@ -912,7 +917,18 @@ export interface Player {
   setGuideVolume: (v: number) => void
   /** 오디오 컨텍스트 (싱크 측정용) */
   audioContext: () => AudioContext
+  /** 녹음한 내 목소리 (곡 시간축의 구간들). null이면 끔 */
+  loadTake: (segs: TakeSegment[] | null) => void
+  /** 내 목소리 볼륨 0~1 */
+  setTakeVolume: (v: number) => void
   dispose: () => void
+}
+
+/** 녹음한 내 목소리 한 구간 — t0: 곡에서 시작하는 시간(초) */
+export interface TakeSegment {
+  t0: number
+  sr: number
+  data: Float32Array
 }
 
 export function createPlayer(): Player {
@@ -930,6 +946,10 @@ export function createPlayer(): Player {
   let guideSrc: AudioBufferSourceNode | null = null
   let guideGain: GainNode | null = null
   let guideVol = 0
+  let takeBufs: { t0: number; buf: AudioBuffer }[] = []
+  let takeSrcs: AudioBufferSourceNode[] = []
+  let takeGain: GainNode | null = null
+  let takeVol = 0
 
   const ensure = () => {
     if (!ctx) {
@@ -948,8 +968,35 @@ export function createPlayer(): Player {
       guideGain = ctx.createGain()
       guideGain.gain.value = guideVol * guideVol
       guideGain.connect(gain)
+      // 내 목소리는 반주 볼륨과 따로 조절한다
+      takeGain = ctx.createGain()
+      takeGain.gain.value = takeVol * takeVol
+      takeGain.connect(lim)
     }
     return ctx
+  }
+  const stopTake = () => {
+    for (const t of takeSrcs) {
+      try {
+        t.stop()
+      } catch {
+        /* already stopped */
+      }
+      t.disconnect()
+    }
+    takeSrcs = []
+  }
+  const startTake = (when: number, at: number) => {
+    stopTake()
+    if (!ctx || !takeGain || !takeBufs.length) return
+    for (const { t0, buf } of takeBufs) {
+      if (t0 + buf.duration <= at) continue
+      const g = ctx.createBufferSource()
+      g.buffer = buf
+      g.connect(takeGain)
+      g.start(when + Math.max(0, t0 - at), Math.max(0, at - t0))
+      takeSrcs.push(g)
+    }
   }
   const stopGuide = () => {
     if (guideSrc) {
@@ -984,6 +1031,7 @@ export function createPlayer(): Player {
       src = null
     }
     stopGuide()
+    stopTake()
   }
   const startSrc = () => {
     if (!buffer) return
@@ -1005,6 +1053,7 @@ export function createPlayer(): Player {
     const when = c.currentTime + 0.03
     s.start(when, offset)
     startGuide(when, offset)
+    startTake(when, offset)
     src = s
     startedAt = when
     playing = true
@@ -1061,6 +1110,22 @@ export function createPlayer(): Player {
       if (guideGain) guideGain.gain.value = v * v
     },
     audioContext: () => ensure(),
+    loadTake(segs) {
+      const c = ensure()
+      takeBufs = (segs ?? [])
+        .filter((g) => g.data.length > 0)
+        .map((g) => {
+          const b = c.createBuffer(1, g.data.length, g.sr)
+          b.copyToChannel(g.data as Float32Array<ArrayBuffer>, 0)
+          return { t0: g.t0, buf: b }
+        })
+      if (playing && ctx) startTake(ctx.currentTime + 0.02, rawPos() + 0.02)
+      else stopTake()
+    },
+    setTakeVolume(v) {
+      takeVol = v
+      if (takeGain) takeGain.gain.value = v * v
+    },
     outputLatencyMs() {
       const c = ensure()
       return Math.round(((c.outputLatency || 0) + (c.baseLatency || 0)) * 1000)
@@ -1090,6 +1155,7 @@ export function onPitch(cb: (f: PitchFrame) => void): () => void {
 interface MicRuntime {
   stream?: MediaStream
   ctx?: AudioContext
+  node?: MediaStreamAudioSourceNode
   timer: ReturnType<typeof setInterval>
 }
 let mic: MicRuntime | null = null
@@ -1204,7 +1270,7 @@ export async function startMic(opts: MicOptions = {}): Promise<MicResult> {
         const midi = spike(hz > 0 ? hzToMidi(hz) : null)
         emit({ time: performance.now() / 1000, hz: midi === null ? null : midiToHz(midi), midi, clarity, level })
       }, 20)
-      mic = { stream, ctx, timer }
+      mic = { stream, ctx, node, timer }
       return { mode: 'live', fellBack: false }
     } catch (e) {
       reason = micErrorMessage(e)
@@ -1264,7 +1330,57 @@ export function micErrorMessage(e: unknown): string {
   return e instanceof Error ? e.message : '마이크 권한을 얻지 못했어요.'
 }
 
+/* 연습 녹음 — 마이크 소리를 그대로 모은다 (곡 시간축에 맞춰 다시 들려주기용) */
+let take: { sp: ScriptProcessorNode; mute: GainNode; chunks: Float32Array[]; t0: number | null; sr: number; getT: () => number } | null = null
+
+/** 마이크 녹음 시작. getSongTime: 지금 마이크에 들어오는 소리가 곡의 몇 초인지 */
+export function startTake(getSongTime: () => number): boolean {
+  stopTake()
+  if (!mic?.ctx || !mic.node) return false
+  const ctx = mic.ctx
+  const sp = ctx.createScriptProcessor(4096, 1, 1)
+  const mute = ctx.createGain()
+  mute.gain.value = 0
+  const tk = { sp, mute, chunks: [] as Float32Array[], t0: null as number | null, sr: ctx.sampleRate, getT: getSongTime }
+  sp.onaudioprocess = (e) => {
+    const d = e.inputBuffer.getChannelData(0)
+    // 첫 묶음: 이 묶음의 첫 샘플이 곡의 몇 초인지 기록
+    if (tk.t0 === null) tk.t0 = tk.getT() - d.length / tk.sr
+    tk.chunks.push(new Float32Array(d))
+  }
+  mic.node.connect(sp)
+  sp.connect(mute)
+  mute.connect(ctx.destination)
+  take = tk
+  return true
+}
+
+/** 마이크 녹음 끝 — 녹음한 구간을 돌려준다 */
+export function stopTake(): TakeSegment | null {
+  const tk = take
+  take = null
+  if (!tk) return null
+  try {
+    mic?.node?.disconnect(tk.sp)
+  } catch {
+    /* already disconnected */
+  }
+  tk.sp.disconnect()
+  tk.mute.disconnect()
+  tk.sp.onaudioprocess = null
+  if (tk.t0 === null || !tk.chunks.length) return null
+  const n = tk.chunks.reduce((a, c) => a + c.length, 0)
+  const data = new Float32Array(n)
+  let o = 0
+  for (const c of tk.chunks) {
+    data.set(c, o)
+    o += c.length
+  }
+  return { t0: tk.t0, sr: tk.sr, data }
+}
+
 export function stopMic(): void {
+  stopTake()
   if (!mic) return
   clearInterval(mic.timer)
   mic.stream?.getTracks().forEach((t) => t.stop())
