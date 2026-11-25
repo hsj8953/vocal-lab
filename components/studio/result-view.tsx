@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowLeft, ChevronDown, Headphones, Lightbulb, Mic, Pause, Play, Repeat, RotateCcw, Sparkles, Target, TrendingDown, TrendingUp } from 'lucide-react'
+import { ArrowLeft, ChevronDown, Download, Headphones, Loader2, SlidersHorizontal, Wand2, Lightbulb, Mic, Pause, Play, Repeat, RotateCcw, Sparkles, Target, TrendingDown, TrendingUp } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import * as engine from '@/lib/engine'
 import { loadHistory, phraseDelta, songKey, type HistoryEntry } from '@/lib/history'
@@ -9,7 +9,9 @@ import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { fmtTime, noteName } from '@/lib/music'
 import { cn } from '@/lib/utils'
+import { FX_PRESETS, type FxParams } from '@/lib/vocal-fx'
 import { RangeCompare } from './range-compare'
+import { Seg } from './ui-bits'
 import { useFrame, useStudio } from './studio-provider'
 
 const STATUS: Record<Status, { text: string; dot: string; chip: string }> = {
@@ -98,7 +100,7 @@ export function ResultView() {
           </Button>
         </div>
       ) : (
-        <div className="rise-in mt-6 grid grid-cols-1 gap-5 lg:grid-cols-[1.25fr_1fr]">
+        <div className="rise-in mt-6 grid grid-cols-1 items-start gap-5 lg:grid-cols-[1.25fr_1fr]">
           <SummaryCard report={report} history={history} prev={prev} isSaved={isSaved} />
           <TakeCard />
           <CoachingSection report={report} />
@@ -265,6 +267,7 @@ function TakeCard() {
           <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
             아래 코칭의 시간 버튼을 누르면 그 부분부터 들려줘요. 반주를 끄고 내 목소리만 들으면 음이 어긋난 곳이 더 잘 들려요.
           </p>
+          <FxPanel />
         </>
       ) : (
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
@@ -682,5 +685,161 @@ function NoteTable({ report }: { report: Report }) {
         {!rows.length ? <p className="py-6 text-center text-sm text-muted-foreground">문제 있는 노트가 없어요!</p> : null}
       </div>
     </section>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* 녹음 효과                                                             */
+/* ------------------------------------------------------------------ */
+
+function FxPanel() {
+  const { s, a } = useStudio()
+  const [open, setOpen] = useState(false)
+  const fx = s.fx
+  const set = (patch: Partial<FxParams>) => a.setFx(patch)
+  const pct = (v: number) => `${Math.round(v * 100)}%`
+  const db = (v: number) => `${v > 0 ? '+' : ''}${Math.round(v)}dB`
+  return (
+    <div className="mt-5 border-t border-border pt-4">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold">
+          <Wand2 className="size-4 text-voice" /> 효과
+        </h3>
+        {s.fxBusy !== null ? (
+          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground" role="status">
+            <Loader2 className="size-3.5 animate-spin" /> 효과 계산 중 {Math.round(s.fxBusy * 100)}%
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-2.5 grid grid-cols-3 gap-1.5">
+        {FX_PRESETS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => a.setFxPreset(p.id)}
+            title={p.desc}
+            aria-pressed={s.fxPreset === p.id}
+            className={cn(
+              'rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors',
+              s.fxPreset === p.id ? 'border-voice bg-voice/15 text-voice' : 'border-border bg-background/40 hover:bg-muted',
+            )}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">{FX_PRESETS.find((p) => p.id === s.fxPreset)?.desc ?? '직접 조절한 효과'}</p>
+
+      {fx.tune > 0 ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-muted/40 p-2.5">
+          <span className="text-xs font-medium">튜닝 비교</span>
+          <Seg
+            label="튜닝 비교"
+            size="sm"
+            value={s.fxCompare}
+            onChange={a.setFxCompare}
+            options={[
+              { value: 'raw', label: '튜닝 전 (내 음 그대로)' },
+              { value: 'tuned', label: '튜닝 후 (맞는 음)' },
+            ]}
+          />
+          <span className="w-full text-[11px] text-muted-foreground">재생하면서 번갈아 눌러 보세요. 튜닝 후에서 달라지는 곳이 음이 어긋난 곳이에요.</span>
+        </div>
+      ) : null}
+
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="mt-3 flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
+        <SlidersHorizontal className="size-3.5" /> 세부 조절
+        <ChevronDown className={cn('ml-auto size-3.5 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open ? (
+        <div className="mt-2 space-y-4 text-xs">
+          <FxGroup title="오토튠" hint="노트의 음으로 내 음을 맞춰요">
+            <FxSlider label="세기" value={fx.tune} min={0} max={1} step={0.05} fmt={pct} onChange={(v) => set({ tune: v })} />
+            <FxSlider label="속도" value={fx.tuneSpeed} min={0} max={250} step={10} fmt={(v) => (v === 0 ? '로봇' : `${v}ms`)} onChange={(v) => set({ tuneSpeed: v })} hint="작을수록 음에 딱 붙어요(로봇 느낌), 클수록 자연스러워요" />
+          </FxGroup>
+          <FxGroup title="리버브" hint="공간의 울림">
+            <Seg
+              label="리버브 종류"
+              size="sm"
+              className="w-full"
+              value={fx.reverbType}
+              onChange={(v) => set({ reverbType: v })}
+              options={[
+                { value: 'room', label: '작은 방' },
+                { value: 'karaoke', label: '노래방' },
+                { value: 'hall', label: '홀' },
+              ]}
+            />
+            <FxSlider label="양" value={fx.reverb} min={0} max={1} step={0.02} fmt={pct} onChange={(v) => set({ reverb: v })} />
+          </FxGroup>
+          <FxGroup title="에코" hint="소리가 뒤따라 반복돼요">
+            <FxSlider label="양" value={fx.echo} min={0} max={1} step={0.02} fmt={pct} onChange={(v) => set({ echo: v })} />
+            <FxSlider label="간격" value={fx.echoTime} min={80} max={800} step={10} fmt={(v) => `${v}ms`} onChange={(v) => set({ echoTime: v })} />
+            <FxSlider label="반복" value={fx.echoFeedback} min={0} max={0.8} step={0.05} fmt={pct} onChange={(v) => set({ echoFeedback: v })} />
+          </FxGroup>
+          <FxGroup title="EQ (음색)" hint="저음은 웅웅거림, 중음은 또렷함, 고음은 밝기">
+            <FxSlider label="저음" value={fx.low} min={-12} max={12} step={1} fmt={db} onChange={(v) => set({ low: v })} />
+            <FxSlider label="중음" value={fx.mid} min={-12} max={12} step={1} fmt={db} onChange={(v) => set({ mid: v })} />
+            <FxSlider label="고음" value={fx.high} min={-12} max={12} step={1} fmt={db} onChange={(v) => set({ high: v })} />
+          </FxGroup>
+          <FxGroup title="컴프레서" hint="작은 소리는 키우고 큰 소리는 눌러서 고르게">
+            <FxSlider label="세기" value={fx.comp} min={0} max={1} step={0.05} fmt={pct} onChange={(v) => set({ comp: v })} />
+          </FxGroup>
+          <FxGroup title="노이즈 게이트" hint="노래 안 하는 구간의 잡음·숨소리 줄이기">
+            <FxSlider label="세기" value={fx.gate} min={0} max={1} step={0.05} fmt={pct} onChange={(v) => set({ gate: v })} />
+          </FxGroup>
+          <FxGroup title="더블링" hint="두 번 녹음해 겹친 것처럼 두껍게">
+            <FxSlider label="양" value={fx.double} min={0} max={1} step={0.05} fmt={pct} onChange={(v) => set({ double: v })} />
+          </FxGroup>
+          <FxGroup title="자동 화음" hint="곡의 조성에 맞는 3도 화음을 만들어요">
+            <Seg
+              label="화음 종류"
+              size="sm"
+              className="w-full"
+              value={fx.harmony}
+              onChange={(v) => set({ harmony: v })}
+              options={[
+                { value: 'off', label: '끔' },
+                { value: 'up3', label: '3도 위' },
+                { value: 'down3', label: '3도 아래' },
+                { value: 'both', label: '위+아래' },
+              ]}
+            />
+            {fx.harmony !== 'off' ? <FxSlider label="양" value={fx.harmonyMix} min={0} max={1} step={0.05} fmt={pct} onChange={(v) => set({ harmonyMix: v })} /> : null}
+          </FxGroup>
+        </div>
+      ) : null}
+
+      <Button variant="outline" className="mt-4 w-full" disabled={s.exporting || s.fxBusy !== null} onClick={() => void a.exportMix()}>
+        {s.exporting ? <Loader2 className="animate-spin" /> : <Download />}
+        {s.exporting ? '저장하는 중…' : '효과 넣어 저장 (WAV)'}
+      </Button>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">지금 들리는 그대로(내 목소리·반주 볼륨, 튜닝 전/후 포함) 저장돼요.</p>
+    </div>
+  )
+}
+
+function FxGroup({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-border bg-background/30 p-3">
+      <p className="font-semibold">
+        {title} <span className="font-normal text-muted-foreground">· {hint}</span>
+      </p>
+      <div className="mt-2 space-y-2">{children}</div>
+    </div>
+  )
+}
+
+function FxSlider({ label, value, min, max, step, fmt, onChange, hint }: { label: string; value: number; min: number; max: number; step: number; fmt: (v: number) => string; onChange: (v: number) => void; hint?: string }) {
+  return (
+    <div title={hint}>
+      <label className="flex items-center gap-3">
+        <span className="w-10 shrink-0 text-muted-foreground">{label}</span>
+        <div className="flex-1">
+          <Slider value={[value]} min={min} max={max} step={step} onValueChange={(v) => onChange(Array.isArray(v) ? v[0] : (v as number))} aria-label={label} />
+        </div>
+        <span className="w-12 text-right font-mono tabular">{fmt(value)}</span>
+      </label>
+    </div>
   )
 }

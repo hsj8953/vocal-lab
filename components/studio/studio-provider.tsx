@@ -200,6 +200,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           volume: v.volume ?? p.volume,
           guideVolume: v.guideVolume ?? p.guideVolume,
           analysis: { ...p.analysis, ...(v.analysis ?? {}) },
+          fx: v.fx ? { ...p.fx, ...v.fx } : p.fx,
+          fxPreset: v.fxPreset ?? p.fxPreset,
         }))
     } catch {
       /* 저장소를 못 쓰는 환경 */
@@ -217,12 +219,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           volume: s.volume,
           guideVolume: s.guideVolume,
           analysis: { sensitivity: s.analysis.sensitivity, splitSyllables: s.analysis.splitSyllables, autofill: s.analysis.autofill, pitchModel: s.analysis.pitchModel, crepeModel: s.analysis.crepeModel, separate: s.analysis.separate },
+          fx: s.fx,
+          fxPreset: s.fxPreset,
         }),
       )
     } catch {
       /* 무시 */
     }
-  }, [s.guideVolume, s.userRange, s.syncMs, s.micLatencyMs, s.notation, s.volume, s.analysis.sensitivity, s.analysis.splitSyllables, s.analysis.autofill, s.analysis.pitchModel, s.analysis.crepeModel, s.analysis.separate])
+  }, [s.guideVolume, s.userRange, s.syncMs, s.micLatencyMs, s.notation, s.volume, s.analysis.sensitivity, s.analysis.splitSyllables, s.analysis.autofill, s.analysis.pitchModel, s.analysis.crepeModel, s.analysis.separate, s.fx, s.fxPreset])
 
   /* 가이드 보컬: MR 재생 중이고 볼륨이 0보다 클 때만 만든다 */
   const guideOn = isReal && s.source === 'mr' && s.guideAvailable && s.guideVolume > 0

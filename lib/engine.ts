@@ -917,11 +917,25 @@ export interface Player {
   setGuideVolume: (v: number) => void
   /** 오디오 컨텍스트 (싱크 측정용) */
   audioContext: () => AudioContext
-  /** 녹음한 내 목소리 (곡 시간축의 구간들). null이면 끔 */
-  loadTake: (segs: TakeSegment[] | null) => void
-  /** 내 목소리 볼륨 0~1 */
+  /** 녹음한 내 목소리 레이어들 (원래 목소리, 튜닝, 화음, 더블링 …). null이면 끔 */
+  loadTakeLayers: (layers: TakeLayer[] | null) => void
+  /** 레이어 볼륨 (0~1, 제곱하지 않은 그대로) */
+  setLayerGain: (id: string, g: number) => void
+  /** 내 목소리 전체 볼륨 0~1 */
   setTakeVolume: (v: number) => void
+  /** 내 목소리에 걸 효과 체인. null이면 효과 없음 */
+  setTakeChain: (chain: { input: AudioNode; output: AudioNode } | null) => void
+  /** 지금 재생 중인 반주 버퍼 (저장용) */
+  getBuffer: () => AudioBuffer | null
   dispose: () => void
+}
+
+/** 내 목소리 레이어 — 같은 시간축(t0)에서 함께 재생 */
+export interface TakeLayer {
+  id: string
+  t0: number
+  buf: AudioBuffer
+  gain: number
 }
 
 /** 녹음한 내 목소리 한 구간 — t0: 곡에서 시작하는 시간(초) */
@@ -946,10 +960,21 @@ export function createPlayer(): Player {
   let guideSrc: AudioBufferSourceNode | null = null
   let guideGain: GainNode | null = null
   let guideVol = 0
-  let takeBufs: { t0: number; buf: AudioBuffer }[] = []
+  let layers: { id: string; t0: number; buf: AudioBuffer; g: GainNode }[] = []
   let takeSrcs: AudioBufferSourceNode[] = []
+  let takeBus: GainNode | null = null
   let takeGain: GainNode | null = null
   let takeVol = 0
+  let chain: { input: AudioNode; output: AudioNode } | null = null
+  const wireChain = () => {
+    if (!takeBus || !takeGain) return
+    takeBus.disconnect()
+    if (chain) {
+      takeBus.connect(chain.input)
+      chain.output.disconnect()
+      chain.output.connect(takeGain)
+    } else takeBus.connect(takeGain)
+  }
 
   const ensure = () => {
     if (!ctx) {
@@ -972,6 +997,8 @@ export function createPlayer(): Player {
       takeGain = ctx.createGain()
       takeGain.gain.value = takeVol * takeVol
       takeGain.connect(lim)
+      takeBus = ctx.createGain()
+      wireChain()
     }
     return ctx
   }
@@ -988,13 +1015,13 @@ export function createPlayer(): Player {
   }
   const startTake = (when: number, at: number) => {
     stopTake()
-    if (!ctx || !takeGain || !takeBufs.length) return
-    for (const { t0, buf } of takeBufs) {
-      if (t0 + buf.duration <= at) continue
+    if (!ctx || !takeBus || !layers.length) return
+    for (const L of layers) {
+      if (L.t0 + L.buf.duration <= at) continue
       const g = ctx.createBufferSource()
-      g.buffer = buf
-      g.connect(takeGain)
-      g.start(when + Math.max(0, t0 - at), Math.max(0, at - t0))
+      g.buffer = L.buf
+      g.connect(L.g)
+      g.start(when + Math.max(0, L.t0 - at), Math.max(0, at - L.t0))
       takeSrcs.push(g)
     }
   }
@@ -1110,18 +1137,29 @@ export function createPlayer(): Player {
       if (guideGain) guideGain.gain.value = v * v
     },
     audioContext: () => ensure(),
-    loadTake(segs) {
-      const c = ensure()
-      takeBufs = (segs ?? [])
-        .filter((g) => g.data.length > 0)
-        .map((g) => {
-          const b = c.createBuffer(1, g.data.length, g.sr)
-          b.copyToChannel(g.data as Float32Array<ArrayBuffer>, 0)
-          return { t0: g.t0, buf: b }
-        })
+    loadTakeLayers(next) {
+      ensure()
+      stopTake()
+      for (const L of layers) L.g.disconnect()
+      layers = (next ?? []).map((L) => {
+        const g = ctx!.createGain()
+        g.gain.value = L.gain
+        g.connect(takeBus!)
+        return { id: L.id, t0: L.t0, buf: L.buf, g }
+      })
       if (playing && ctx) startTake(ctx.currentTime + 0.02, rawPos() + 0.02)
-      else stopTake()
     },
+    setLayerGain(id, v) {
+      const L = layers.find((x) => x.id === id)
+      if (L && ctx) L.g.gain.setTargetAtTime(v, ctx.currentTime, 0.015)
+    },
+    setTakeChain(c) {
+      ensure()
+      if (chain && chain !== c) chain.output.disconnect()
+      chain = c
+      wireChain()
+    },
+    getBuffer: () => buffer,
     setTakeVolume(v) {
       takeVol = v
       if (takeGain) takeGain.gain.value = v * v

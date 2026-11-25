@@ -6,6 +6,7 @@ import { parseLrc } from '@/lib/lrc'
 import { attachLyrics, replaceLineTexts } from '@/lib/lyric-align'
 import { buildReport } from '@/lib/report'
 import { saveHistory, songKey } from '@/lib/history'
+import { FX_PRESETS, createVocalChain, layerGains, pitchCurve, renderKey, renderLayers, encodeWav, type FxParams, type RenderedLayers, type VocalChain } from '@/lib/vocal-fx'
 import type { LyricLine } from './studio-types'
 import type { Notation } from '@/lib/music'
 import {
@@ -224,7 +225,9 @@ export function createActions(env: ActionEnv) {
     if (!sRef.current.mic.on && !(await startMicNow())) return
     resetSession()
     takeSegs = []
-    playerRef.current?.loadTake(null)
+    take = null
+    rendered = null
+    playerRef.current?.loadTakeLayers(null)
     const { t0, t1 } = practiceRange()
     seek(t0)
     set({ loop: null, takeAvailable: false, practice: { phase: 'countdown', count: 3, t0, t1 } })
@@ -268,7 +271,10 @@ export function createActions(env: ActionEnv) {
     if (report.enough) saveHistory(songKey(st.project.title, st.project.duration), st.keyShift, report)
     const segs = takeSegs
     takeSegs = []
-    playerRef.current?.loadTake(segs.length ? segs : null)
+    take = null
+    rendered = null
+    takeSession = session
+    if (segs.length) void prepareTake(segs)
     set((p) => ({
       practice: { phase: 'idle', count: 0, t0: 0, t1: 0 },
       practiceSpan: span,
@@ -279,6 +285,175 @@ export function createActions(env: ActionEnv) {
       view: 'result',
     }))
     if (!report.enough) notify('부른 부분이 짧아서 기록에는 저장하지 않았어요.')
+  }
+
+  /* ------------------------------ 녹음 효과 ------------------------------ */
+
+  let take: { t0: number; data: Float32Array; sr: number } | null = null
+  let takeSession: engine.SessionStats | null = null
+  let rendered: { key: string; layers: RenderedLayers } | null = null
+  let chainObj: VocalChain | null = null
+  let renderTok = 0
+  let fxTimer: ReturnType<typeof setTimeout> | undefined
+
+  /** 녹음 구간들을 하나로 합치고 32kHz로 낮춘다 (메모리 절약) */
+  const prepareTake = async (segs: engine.TakeSegment[]) => {
+    const sr0 = segs[0].sr
+    const t0 = Math.min(...segs.map((g) => g.t0))
+    const t1 = Math.max(...segs.map((g) => g.t0 + g.data.length / g.sr))
+    const merged = new Float32Array(Math.ceil((t1 - t0) * sr0))
+    for (const g of segs) merged.set(g.data.subarray(0, Math.max(0, merged.length - Math.round((g.t0 - t0) * sr0))), Math.max(0, Math.round((g.t0 - t0) * sr0)))
+    let data: Float32Array = merged
+    let sr = sr0
+    if (sr0 > 32000) {
+      try {
+        const len = Math.ceil((merged.length * 32000) / sr0)
+        const oc = new OfflineAudioContext(1, len, 32000)
+        const b = oc.createBuffer(1, merged.length, sr0)
+        b.copyToChannel(merged, 0)
+        const src = oc.createBufferSource()
+        src.buffer = b
+        src.connect(oc.destination)
+        src.start()
+        data = (await oc.startRendering()).getChannelData(0)
+        sr = 32000
+      } catch {
+        /* 낮추지 못하면 원래대로 */
+      }
+    }
+    take = { t0, data, sr }
+    await applyFx(sRef.current.fx, true)
+  }
+
+  /** 효과 적용 — 바로 바뀌는 값은 즉시, 다시 계산할 값은 바뀌었을 때만 */
+  const applyFx = async (fx: FxParams, force = false) => {
+    const p = playerRef.current
+    if (!take || !takeSession || !p) return
+    const ctx = p.audioContext()
+    if (!chainObj) {
+      chainObj = createVocalChain(ctx, fx)
+      p.setTakeChain(chainObj)
+    } else chainObj.update(fx)
+    const key = renderKey(fx)
+    if (force || !rendered || rendered.key !== key) {
+      const tok = ++renderTok
+      set({ fxBusy: 0 })
+      const tk = take
+      const curve = pitchCurve(takeSession, tk.t0, tk.data.length / tk.sr)
+      const layers = await renderLayers(tk, curve, sRef.current.notes, live.shift, fx, (r) => tok === renderTok && set({ fxBusy: r }))
+      if (tok !== renderTok || take !== tk) return
+      rendered = { key, layers }
+      const mk = (id: string, chans: Float32Array[]) => {
+        const b = ctx.createBuffer(chans.length, chans[0].length, tk.sr)
+        chans.forEach((c, i) => b.copyToChannel(c as Float32Array<ArrayBuffer>, i))
+        return { id, t0: tk.t0, buf: b, gain: 0 }
+      }
+      const L = [mk('raw', [layers.raw])]
+      if (layers.tuned) L.push(mk('tuned', [layers.tuned]))
+      if (layers.harmony) L.push(mk('harmony', [layers.harmony]))
+      if (layers.double) L.push(mk('double', layers.double))
+      p.loadTakeLayers(L)
+      set({ fxBusy: null, takeAvailable: true })
+    }
+    setGains(fx, sRef.current.fxCompare)
+  }
+
+  const setGains = (fx: FxParams, compare: 'tuned' | 'raw') => {
+    const p = playerRef.current
+    if (!p || !rendered) return
+    const l = rendered.layers
+    const g = layerGains(fx, { tuned: !!l.tuned, harmony: !!l.harmony, double: !!l.double }, compare)
+    for (const [id, v] of Object.entries(g)) p.setLayerGain(id, v)
+  }
+
+  const setFx = (patch: Partial<FxParams>, preset = 'custom') => {
+    const fx = { ...sRef.current.fx, ...patch }
+    sRef.current = { ...sRef.current, fx }
+    set({ fx, fxPreset: preset })
+    // 바로 바뀌는 값
+    chainObj?.update(fx)
+    if (rendered && rendered.key === renderKey(fx)) setGains(fx, sRef.current.fxCompare)
+    // 다시 계산할 값은 손을 뗀 뒤에
+    clearTimeout(fxTimer)
+    fxTimer = setTimeout(() => void applyFx(sRef.current.fx), 350)
+  }
+
+  const setFxPreset = (id: string) => {
+    const pr = FX_PRESETS.find((x) => x.id === id)
+    if (pr) setFx({ ...pr.fx }, id)
+  }
+
+  const setFxCompare = (fxCompare: 'tuned' | 'raw') => {
+    sRef.current = { ...sRef.current, fxCompare }
+    set({ fxCompare })
+    setGains(sRef.current.fx, fxCompare)
+  }
+
+  /** 효과 넣은 내 노래 + 반주를 WAV로 저장 */
+  const exportMix = async () => {
+    const st = sRef.current
+    const p = playerRef.current
+    if (!take || !rendered || !p) return notify('저장할 녹음이 없어요.')
+    if (st.fxBusy !== null) return notify('효과를 계산하는 중이에요. 잠시 후 다시 눌러 주세요.')
+    set({ exporting: true })
+    try {
+      const span = st.practiceSpan ?? { t0: take.t0, t1: take.t0 + take.data.length / take.sr }
+      const a0 = Math.max(0, span.t0 - 0.3)
+      const a1 = span.t1 + 2
+      const sr = 44100
+      const oc = new OfflineAudioContext(2, Math.ceil((a1 - a0) * sr), sr)
+      const lim = oc.createDynamicsCompressor()
+      lim.threshold.value = -2
+      lim.knee.value = 0
+      lim.ratio.value = 20
+      lim.attack.value = 0.002
+      lim.release.value = 0.1
+      lim.connect(oc.destination)
+      const mr = p.getBuffer()
+      if (mr && st.resultMr && !st.muted) {
+        const g = oc.createGain()
+        g.gain.value = st.volume * st.volume
+        const src = oc.createBufferSource()
+        src.buffer = mr
+        src.connect(g).connect(lim)
+        src.start(0, Math.min(a0, mr.duration))
+      }
+      const chain = createVocalChain(oc, st.fx)
+      const vg = oc.createGain()
+      vg.gain.value = st.takeVolume * st.takeVolume
+      chain.output.connect(vg).connect(lim)
+      const l = rendered.layers
+      const gains = layerGains(st.fx, { tuned: !!l.tuned, harmony: !!l.harmony, double: !!l.double }, st.fxCompare)
+      const add = (chans: Float32Array[] | null, gain: number) => {
+        if (!chans || gain <= 0) return
+        const b = oc.createBuffer(chans.length, chans[0].length, take!.sr)
+        chans.forEach((c, i) => b.copyToChannel(c as Float32Array<ArrayBuffer>, i))
+        const src = oc.createBufferSource()
+        src.buffer = b
+        const g = oc.createGain()
+        g.gain.value = gain
+        src.connect(g).connect(chain.input)
+        src.start(Math.max(0, take!.t0 - a0), Math.max(0, a0 - take!.t0))
+      }
+      add([l.raw], gains.raw)
+      add(l.tuned ? [l.tuned] : null, gains.tuned)
+      add(l.harmony ? [l.harmony] : null, gains.harmony)
+      add(l.double, gains.double)
+      const out = await oc.startRendering()
+      const url = URL.createObjectURL(encodeWav(out))
+      const el = document.createElement('a')
+      el.href = url
+      el.download = `${st.project.title || '내 노래'} (내 노래).wav`
+      document.body.appendChild(el)
+      el.click()
+      el.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 15000)
+      notify('효과를 넣은 내 노래를 저장했어요.')
+    } catch (e) {
+      notify('저장하지 못했어요: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      set({ exporting: false })
+    }
   }
 
   /* 소절 반복 */
@@ -683,6 +858,10 @@ export function createActions(env: ActionEnv) {
     clearLoop,
     listenFrom,
     setTakeVolume: (v: number) => set({ takeVolume: clamp(v, 0, 1) }),
+    setFx,
+    setFxPreset,
+    setFxCompare,
+    exportMix,
     setResultMr: (resultMr: boolean) => set({ resultMr }),
 
     /* 편집 */

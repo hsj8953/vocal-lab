@@ -1,6 +1,7 @@
 import * as engine from '@/lib/engine'
 import type { AlignResult, Compare, CrepeModel, Note, OctaveMode, PitchModel, RealInfo, SessionStats, Tier, UserRange } from '@/lib/engine'
 import type { Notation } from '@/lib/music'
+import { FX_OFF, type FxParams } from '@/lib/vocal-fx'
 
 export type View = 'import' | 'studio' | 'result'
 export type RailTab = 'key' | 'analysis' | 'edit'
@@ -129,6 +130,17 @@ export interface StudioState {
   historyRev: number
   /** 소절 반복 구간 */
   loop: { a: number; b: number; label?: string } | null
+
+  /** 녹음한 내 노래에 거는 효과 */
+  fx: FxParams
+  /** 효과 프리셋 id (직접 바꾸면 'custom') */
+  fxPreset: string
+  /** 튜닝 전/후 비교: 지금 들리는 쪽 */
+  fxCompare: 'tuned' | 'raw'
+  /** 효과 계산 중 (0~1), 아니면 null */
+  fxBusy: number | null
+  /** 저장 중 */
+  exporting: boolean
 }
 
 export interface PracticeState {
@@ -232,6 +244,11 @@ export function createInitialState(): StudioState {
     resultMr: true,
     historyRev: 0,
     loop: null,
+    fx: FX_OFF,
+    fxPreset: 'raw',
+    fxCompare: 'tuned',
+    fxBusy: null,
+    exporting: false,
   }
 }
 
