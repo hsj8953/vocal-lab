@@ -3,7 +3,7 @@ import * as engine from '@/lib/engine'
 import type { AnalysisOptions, CrepeModel, Note, OctaveMode, PitchFrame, PitchModel, Player, Recorder } from '@/lib/engine'
 import { clamp } from '@/lib/music'
 import { parseLrc } from '@/lib/lrc'
-import { attachLyrics, replaceLineTexts } from '@/lib/lyric-align'
+import { assignMixedReadings, attachLyrics, replaceLineTexts, splitMixedLyrics } from '@/lib/lyric-align'
 import { buildReport } from '@/lib/report'
 import { saveHistory, songKey } from '@/lib/history'
 import * as library from '@/lib/library'
@@ -869,6 +869,23 @@ export function createActions(env: ActionEnv) {
       const cur = sRef.current.lyrics
       if (!cur) {
         notify('먼저 시간이 있는 가사(LRCLIB 등)를 불러와 주세요. 독음은 그 줄 시간에 맞춰 들어가요.')
+        return
+      }
+      // 일본어·독음·해석이 섞인 가사면 독음만 골라서 맞는 줄에
+      const pairs = splitMixedLyrics(text)
+      if (pairs) {
+        const m = assignMixedReadings(cur.lines, pairs, from)
+        if (!m.placed) {
+          notify(`일본어 ${pairs.length}줄은 찾았는데 독음 줄을 못 찾았어요. 일본어 다음 줄에 독음이 있는 가사인지 확인해 주세요.`)
+          return
+        }
+        set({ lyrics: { ...cur, lines: m.lines } })
+        const extra = [m.noReading ? `독음이 없는 일본어 ${m.noReading}줄` : '', m.unmatched ? `가사에서 같은 줄을 못 찾은 ${m.unmatched}줄` : ''].filter(Boolean).join(', ')
+        notify(
+          m.mode === 'text'
+            ? `섞인 가사에서 독음 ${m.placed}줄을 골라 일본어가 같은 줄에 넣었어요.${extra ? ` (${extra}은 건너뜀)` : ''}`
+            : `섞인 가사에서 독음을 골라 앞에서부터 순서대로 넣었어요. 일본어가 가사 줄과 달라서 순서로 맞췄으니 어긋난 곳을 확인해 주세요.${extra ? ` (${extra})` : ''}`,
+        )
         return
       }
       const r = replaceLineTexts(cur.lines, text, from)

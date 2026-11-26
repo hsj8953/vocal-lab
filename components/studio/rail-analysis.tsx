@@ -481,7 +481,7 @@ function ReadingPaste() {
     <details className="mt-3 rounded-lg border border-border p-2.5">
       <summary className="cursor-pointer text-xs font-medium">독음 한꺼번에 붙여넣기</summary>
       <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-        독음을 한 줄씩 붙여넣으면 가사가 있는 줄의 독음 칸에 순서대로 들어가요(원문은 그대로). 간주(빈 줄)는 건너뛰어요. 들어간 뒤 '가사·독음 편집'에서 줄마다 확인하고 고칠 수 있어요.
+        독음을 한 줄씩 붙여넣으면 가사가 있는 줄의 독음 칸에 순서대로 들어가요(원문은 그대로). 간주(빈 줄)는 건너뛰어요. 일본어·독음·해석이 섞인 가사를 그대로 붙여넣으면 독음 줄만 골라서 일본어가 같은 줄에 넣어요. 들어간 뒤 '가사·독음 편집'에서 줄마다 확인하고 고칠 수 있어요.
       </p>
       <textarea
         value={text}

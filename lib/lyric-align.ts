@@ -160,3 +160,105 @@ export function replaceLineTexts(lines: LyricLine[], pasted: string, from = 0): 
   })
   return { lines: out, timed, given: given.length }
 }
+
+/* ------------------------------------------------------------------ */
+/* 일본어·독음·해석이 섞인 가사에서 독음만 골라 넣기                          */
+/* ------------------------------------------------------------------ */
+
+const JP_CHAR = /[぀-ヿ㐀-鿿ｦ-ﾟ]/
+
+/**
+ * 일본어 줄 → (독음 줄) → (해석 줄)이 섞인 가사에서 [일본어, 독음] 짝을 뽑는다.
+ * 일본어 줄 다음에 오는 한국어 줄 중 첫째를 독음으로 본다. 한국어 줄이 하나뿐이면 해석일 가능성이 커서 비워 둔다.
+ * 일본어 줄이 하나도 없으면 null (그냥 독음만 붙여넣은 것)
+ */
+export function splitMixedLyrics(text: string): { jp: string; pr: string }[] | null {
+  const lines = text
+    .split(/\r?\n/)
+    .map((x) => x.replace(/^\s*(\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]\s*)+/, '').trim())
+    .filter(Boolean)
+  if (!lines.some((l) => JP_CHAR.test(l))) return null
+  const groups: { jp: string; kr: string[] }[] = []
+  let cur: { jp: string; kr: string[] } | null = null
+  for (const l of lines) {
+    if (JP_CHAR.test(l)) {
+      cur = { jp: l, kr: [] }
+      groups.push(cur)
+    } else if (cur) cur.kr.push(l)
+  }
+  return groups.map((g) => ({ jp: g.jp, pr: g.kr.length >= 2 ? g.kr[0] : '' }))
+}
+
+const normJp = (s: string) =>
+  s
+    .normalize('NFKC')
+    .replace(/[\s\p{P}\p{S}]/gu, '')
+    .toLowerCase()
+
+/** 두 문장이 얼마나 비슷한지 (글자 2개씩 묶어 겹치는 비율, 0~1) */
+function similar(a: string, b: string) {
+  if (a === b) return 1
+  if (a.length < 2 || b.length < 2) return 0
+  const bi = (s: string) => {
+    const m = new Map<string, number>()
+    for (let i = 0; i + 1 < s.length; i++) m.set(s.slice(i, i + 2), (m.get(s.slice(i, i + 2)) ?? 0) + 1)
+    return m
+  }
+  const A = bi(a)
+  const B = bi(b)
+  let hit = 0
+  for (const [k, v] of A) hit += Math.min(v, B.get(k) ?? 0)
+  return (2 * hit) / (a.length - 1 + b.length - 1)
+}
+
+/**
+ * 뽑은 [일본어, 독음] 짝을 가사 줄에 넣는다.
+ * 가사 줄의 일본어와 같은(비슷한) 줄을 찾아 넣고, 대부분 못 찾으면 순서대로 넣는다.
+ */
+export function assignMixedReadings(
+  lines: LyricLine[],
+  pairs: { jp: string; pr: string }[],
+  from = 0,
+): { lines: LyricLine[]; mode: 'text' | 'order'; placed: number; noReading: number; unmatched: number } {
+  const withPr = pairs.filter((p) => p.pr)
+  const noReading = pairs.length - withPr.length
+  const idx = lines.map((l, i) => ({ i, n: normJp(l.text) })).filter((x) => x.i >= from && x.n)
+  // 1) 일본어로 맞추기: 앞에서부터, 지난번 자리 뒤 몇 줄 안에서 가장 비슷한 줄
+  const byText = new Map<number, string>()
+  let pos = 0
+  for (const p of withPr) {
+    const n = normJp(p.jp)
+    let best = -1
+    let bs = 0
+    for (let k = pos; k < Math.min(idx.length, pos + 8); k++) {
+      if (byText.has(idx[k].i)) continue
+      const s = similar(n, idx[k].n)
+      if (s > bs) {
+        bs = s
+        best = k
+      }
+      if (s === 1) break
+    }
+    if (best >= 0 && bs >= 0.6) {
+      byText.set(idx[best].i, p.pr)
+      pos = best + 1
+    }
+  }
+  if (withPr.length && byText.size >= withPr.length * 0.5) {
+    return {
+      lines: lines.map((l, i) => (byText.has(i) ? { ...l, reading: byText.get(i) } : l)),
+      mode: 'text',
+      placed: byText.size,
+      noReading,
+      unmatched: withPr.length - byText.size,
+    }
+  }
+  // 2) 일본어가 잘 안 맞으면 순서대로 (독음을 못 찾은 줄은 비워 두고 넘어감)
+  let k = 0
+  const out = lines.map((l, i) => {
+    if (i < from || !l.text) return l
+    const p = pairs[k++]
+    return p && p.pr ? { ...l, reading: p.pr } : l
+  })
+  return { lines: out, mode: 'order', placed: Math.min(withPr.length, idx.length), noReading, unmatched: 0 }
+}

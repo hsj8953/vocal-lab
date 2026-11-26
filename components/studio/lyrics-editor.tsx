@@ -192,6 +192,8 @@ function PastePanel({ count, onDone }: { count: number; onDone: () => void }) {
     <div className="border-b border-border bg-muted/20 px-4 py-3">
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         독음을 한 줄씩 붙여넣으면 원문이 있는 줄의 독음 칸에 순서대로 들어가요(원문과 시간은 그대로, 간주 줄은 건너뜀). 이미 적힌 독음은 덮어써요.
+        <br />
+        <b className="text-foreground">일본어·독음·해석이 섞인 가사를 그대로 붙여넣어도 돼요.</b> 독음 줄만 골라서 일본어가 같은 줄에 넣어요.
       </p>
       <textarea
         value={text}
