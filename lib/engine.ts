@@ -1368,57 +1368,142 @@ export function micErrorMessage(e: unknown): string {
   return e instanceof Error ? e.message : '마이크 권한을 얻지 못했어요.'
 }
 
-/* 연습 녹음 — 마이크 소리를 그대로 모은다 (곡 시간축에 맞춰 다시 들려주기용) */
-let take: { sp: ScriptProcessorNode; mute: GainNode; chunks: Float32Array[]; t0: number | null; sr: number; getT: () => number } | null = null
+/* 연습 녹음 — 마이크 소리를 그대로 모은다 (곡 시간축에 맞춰 다시 들려주기용)
+ *
+ * 조각마다 "마이크 오디오의 몇 번째 샘플인지"를 같이 받아서 그 자리에 놓는다.
+ * 예전처럼 도착한 순서대로 이어 붙이면, 화면이 바쁠 때 조각이 하나 빠질 때마다
+ * 그 뒤가 전부 앞당겨져 뒤로 갈수록 목소리가 빨라졌다.
+ * 녹음은 오디오 스레드(AudioWorklet)에서 해서 화면이 바빠도 빠지지 않게 하고,
+ * 못 쓰는 브라우저에서는 ScriptProcessor + 재생 시각으로 자리를 잡는다.
+ */
+interface TakeState {
+  chunks: { f: number; d: Float32Array }[]
+  /** (마이크 오디오 시각, 곡 시각) 짝 — 둘의 차이로 샘플 위치를 곡 시간으로 바꾼다 */
+  offs: number[]
+  sr: number
+  getT: () => number
+  stop: () => void
+}
+let take: TakeState | null = null
+const workletReady = new WeakMap<AudioContext, Promise<boolean>>()
+
+const REC_WORKLET = `class VLRec extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Float32Array(4096); this.n = 0; this.f0 = 0; this.on = true;
+    this.port.onmessage = (e) => { if (e.data === 'stop') { this.flush(); this.on = false } } }
+  flush() { if (this.n > 0) { this.port.postMessage({ f: this.f0, d: this.buf.slice(0, this.n) }); this.n = 0 } }
+  process(inputs) {
+    if (!this.on) return false
+    const ch = inputs[0] && inputs[0][0]
+    if (!ch) return true
+    if (this.n === 0) this.f0 = currentFrame
+    // 오디오가 끊겨 프레임이 건너뛰면 지금까지를 먼저 보낸다
+    else if (currentFrame !== this.f0 + this.n) { this.flush(); this.f0 = currentFrame }
+    this.buf.set(ch, this.n); this.n += ch.length
+    if (this.n + 128 > this.buf.length) this.flush()
+    return true
+  }
+}
+registerProcessor('vl-rec', VLRec)`
+
+function ensureWorklet(ctx: AudioContext): Promise<boolean> {
+  let p = workletReady.get(ctx)
+  if (!p) {
+    p = (async () => {
+      try {
+        if (!ctx.audioWorklet) return false
+        const url = URL.createObjectURL(new Blob([REC_WORKLET], { type: 'text/javascript' }))
+        await ctx.audioWorklet.addModule(url)
+        URL.revokeObjectURL(url)
+        return true
+      } catch {
+        return false
+      }
+    })()
+    workletReady.set(ctx, p)
+  }
+  return p
+}
+
+/** 마이크를 켜 둔 상태면 녹음 준비 (연습 시작 전에 불러 두면 첫 조각을 놓치지 않는다) */
+export function prepareTake(): Promise<boolean> {
+  return mic?.ctx ? ensureWorklet(mic.ctx) : Promise.resolve(false)
+}
 
 /** 마이크 녹음 시작. getSongTime: 지금 마이크에 들어오는 소리가 곡의 몇 초인지 */
-export function startTake(getSongTime: () => number): boolean {
+export async function startTake(getSongTime: () => number): Promise<boolean> {
   stopTake()
   if (!mic?.ctx || !mic.node) return false
   const ctx = mic.ctx
+  const node = mic.node
+  const tk: TakeState = { chunks: [], offs: [], sr: ctx.sampleRate, getT: getSongTime, stop: () => {} }
+  const stamp = () => tk.offs.push(tk.getT() - ctx.currentTime)
+  take = tk
+  if (await ensureWorklet(ctx)) {
+    if (take !== tk) return false
+    const wn = new AudioWorkletNode(ctx, 'vl-rec', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1, channelCountMode: 'explicit' })
+    wn.port.onmessage = (e: MessageEvent<{ f: number; d: Float32Array }>) => {
+      tk.chunks.push(e.data)
+      stamp()
+    }
+    node.connect(wn)
+    stamp()
+    tk.stop = () => {
+      try {
+        node.disconnect(wn)
+      } catch {
+        /* already */
+      }
+      wn.port.postMessage('stop')
+    }
+    return true
+  }
+  // 예전 방식: 재생 시각(playbackTime)으로 자리를 잡는다
   const sp = ctx.createScriptProcessor(4096, 1, 1)
   const mute = ctx.createGain()
   mute.gain.value = 0
-  const tk = { sp, mute, chunks: [] as Float32Array[], t0: null as number | null, sr: ctx.sampleRate, getT: getSongTime }
   sp.onaudioprocess = (e) => {
     const d = e.inputBuffer.getChannelData(0)
-    // 첫 묶음: 이 묶음의 첫 샘플이 곡의 몇 초인지 기록
-    if (tk.t0 === null) tk.t0 = tk.getT() - d.length / tk.sr
-    tk.chunks.push(new Float32Array(d))
+    const f = Math.round(e.playbackTime * tk.sr) - d.length
+    tk.chunks.push({ f, d: new Float32Array(d) })
+    stamp()
   }
-  mic.node.connect(sp)
+  node.connect(sp)
   sp.connect(mute)
   mute.connect(ctx.destination)
-  take = tk
+  stamp()
+  tk.stop = () => {
+    try {
+      node.disconnect(sp)
+    } catch {
+      /* already */
+    }
+    sp.disconnect()
+    mute.disconnect()
+    sp.onaudioprocess = null
+  }
   return true
 }
 
-/** 마이크 녹음 끝 — 녹음한 구간을 돌려준다 */
-export function stopTake(): TakeSegment | null {
+/** 마이크 녹음 끝 — 녹음한 구간을 돌려준다 (AudioWorklet의 마지막 조각을 받으려고 잠깐 기다린다) */
+export async function stopTake(): Promise<TakeSegment | null> {
   const tk = take
   take = null
   if (!tk) return null
-  try {
-    mic?.node?.disconnect(tk.sp)
-  } catch {
-    /* already disconnected */
-  }
-  tk.sp.disconnect()
-  tk.mute.disconnect()
-  tk.sp.onaudioprocess = null
-  if (tk.t0 === null || !tk.chunks.length) return null
-  const n = tk.chunks.reduce((a, c) => a + c.length, 0)
-  const data = new Float32Array(n)
-  let o = 0
-  for (const c of tk.chunks) {
-    data.set(c, o)
-    o += c.length
-  }
-  return { t0: tk.t0, sr: tk.sr, data }
+  tk.stop()
+  await new Promise((r) => setTimeout(r, 60))
+  if (!tk.chunks.length || !tk.offs.length) return null
+  const f0 = Math.min(...tk.chunks.map((c) => c.f))
+  const f1 = Math.max(...tk.chunks.map((c) => c.f + c.d.length))
+  const data = new Float32Array(f1 - f0)
+  for (const c of tk.chunks) data.set(c.d, c.f - f0)
+  // 곡 시각 − 마이크 오디오 시각: 화면이 바빠 늦게 잰 값이 섞여도 흔들리지 않게 중앙값
+  const offs = [...tk.offs].sort((a, b) => a - b)
+  const off = offs[offs.length >> 1]
+  return { t0: off + f0 / tk.sr, sr: tk.sr, data }
 }
 
 export function stopMic(): void {
-  stopTake()
+  void stopTake()
   if (!mic) return
   clearInterval(mic.timer)
   mic.stream?.getTracks().forEach((t) => t.stop())

@@ -65,15 +65,20 @@ export function createActions(env: ActionEnv) {
   let takeSegs: engine.TakeSegment[] = []
   let taking = false
   const takeTime = () => (playerRef.current?.getTime() ?? 0) + syncSec() - sRef.current.micLatencyMs / 1000
+  let takeDone: Promise<void> = Promise.resolve()
   const beginTake = () => {
     if (taking) return
-    taking = engine.startTake(takeTime)
+    taking = true
+    void engine.startTake(takeTime).then((ok) => {
+      if (!ok) taking = false
+    })
   }
   const endTake = () => {
     if (!taking) return
     taking = false
-    const seg = engine.stopTake()
-    if (seg) takeSegs.push(seg)
+    takeDone = engine.stopTake().then((seg) => {
+      if (seg) takeSegs.push(seg)
+    })
   }
 
   const play = async () => {
@@ -224,6 +229,7 @@ export function createActions(env: ActionEnv) {
     pause()
     if (st.view !== 'studio') set({ view: 'studio' })
     if (!sRef.current.mic.on && !(await startMicNow())) return
+    await engine.prepareTake()
     resetSession()
     takeSegs = []
     take = null
@@ -250,7 +256,7 @@ export function createActions(env: ActionEnv) {
   }
 
   /** 연습 끝 — 리포트를 만들고 기록을 저장한 뒤 결과 화면으로 */
-  const finishPractice = () => {
+  const finishPractice = async () => {
     const st = sRef.current
     if (st.practice.phase === 'idle') return
     if (st.practice.phase === 'countdown') return cancelPractice()
@@ -270,6 +276,7 @@ export function createActions(env: ActionEnv) {
       realMic: st.mic.mode === 'live',
     })
     if (report.enough) saveHistory(songKey(st.project.title, st.project.duration), st.keyShift, report)
+    await takeDone
     const segs = takeSegs
     takeSegs = []
     take = null
