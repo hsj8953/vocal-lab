@@ -118,6 +118,27 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       l.playing = player.isPlaying()
       l.time = player.getTime() + sRef.current.syncMs / 1000
       const st = sRef.current
+      // 녹음 다시 보기: 지금 시각에 녹음 때 그린 음을 HUD와 구슬에 보여 준다
+      if (l.replay && l.replayTrace) {
+        const tr = l.replayTrace
+        let lo = 0
+        let hi = tr.length - 1
+        while (lo < hi) {
+          const m = (lo + hi + 1) >> 1
+          if (tr[m].t <= l.time) lo = m
+          else hi = m - 1
+        }
+        const pt = tr[lo]
+        if (pt && pt.midi !== null && l.time - pt.t < 0.08 && pt.t <= l.time) {
+          l.pitchMidi = pt.midi
+          const target = engine.noteAt(l.notes, pt.t)
+          l.cmp = target ? engine.compareFrame(target.midi + l.shift, pt.midi) : null
+          l.targetNoteId = target?.id ?? null
+        } else {
+          l.pitchMidi = null
+          l.cmp = null
+        }
+      }
       if (l.playing) {
         // 연습: 마지막 노트가 끝나면 자동으로 결과로
         if (st.practice.phase === 'running' && l.time >= st.practice.t1) a.finishPractice()
@@ -274,19 +295,23 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // 결과 화면에서 '반주 끄기'면 내 목소리만 들린다
-    const off = s.muted || (s.view === 'result' && !s.resultMr)
+    const off = s.muted || ((s.view === 'result' || s.replay) && !s.resultMr)
     playerRef.current?.setVolume(off ? 0 : s.volume)
-  }, [s.volume, s.muted, s.view, s.resultMr])
+  }, [s.volume, s.muted, s.view, s.resultMr, s.replay])
 
   /* 녹음한 내 목소리는 결과 화면에서만 들린다 */
   useEffect(() => {
-    playerRef.current?.setTakeVolume(s.view === 'result' ? s.takeVolume : 0)
-  }, [s.view, s.takeVolume])
+    playerRef.current?.setTakeVolume(s.view === 'result' || s.replay ? s.takeVolume : 0)
+  }, [s.view, s.takeVolume, s.replay])
 
   /* 화면을 바꾸면 재생을 멈춘다 (결과 ↔ 스튜디오) */
   const prevView = useRef(s.view)
   useEffect(() => {
-    if (prevView.current !== s.view && sRef.current.practice.phase === 'idle' && !sRef.current.loop) a.pause()
+    if (prevView.current !== s.view && sRef.current.practice.phase === 'idle' && !sRef.current.loop) {
+      // 다시 보기 중에 다른 화면으로 가면 다시 보기를 끝낸다 (스튜디오로 들어올 때는 그대로 재생)
+      if (sRef.current.replay && s.view !== 'studio') a.stopReplay()
+      else if (!sRef.current.replay) a.pause()
+    }
     prevView.current = s.view
   }, [s.view, a])
 

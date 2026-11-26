@@ -180,6 +180,7 @@ function StudioView() {
           <MeasureBanner />
           <PracticeOverlay />
           <LoopBanner />
+          <ReplayBanner />
         </div>
         <Transport />
       </div>
@@ -238,13 +239,45 @@ function PracticeOverlay() {
   )
 }
 
+/** 녹음 다시 보기 중 표시 */
+function ReplayBanner() {
+  const { s, a } = useStudio()
+  if (!s.replay) return null
+  const dot = (c: string, t: string) => (
+    <span className="flex items-center gap-1">
+      <span className="size-2 rounded-full" style={{ background: c }} />
+      {t}
+    </span>
+  )
+  return (
+    <div className="absolute top-[5.5rem] right-3 z-10 flex max-w-[calc(100%-1.5rem)] justify-end">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-2xl border border-voice/50 bg-stage/90 py-1.5 pr-1.5 pl-4 text-sm backdrop-blur" role="status">
+        <span className="font-medium text-voice">녹음 다시 보기</span>
+        <span className="flex gap-2.5 text-[11px] text-muted-foreground">
+          {dot('var(--voice)', '맞음')}
+          {dot('var(--caution)', '조금 어긋남')}
+          {dot('var(--miss)', '틀림')}
+        </span>
+        <span className="flex gap-1">
+          <Button size="xs" variant="secondary" onClick={() => a.stopReplay(true)}>
+            결과로 돌아가기
+          </Button>
+          <Button size="xs" variant="ghost" onClick={() => a.stopReplay()}>
+            끝내기
+          </Button>
+        </span>
+      </div>
+    </div>
+  )
+}
+
 /** 소절 반복 중 표시 */
 function LoopBanner() {
   const { s, a } = useStudio()
   if (!s.loop || s.practice.phase !== 'idle') return null
   const fmt = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`
   return (
-    <div className="absolute top-3 right-3 z-10 flex max-w-[calc(100%-1.5rem)] justify-end">
+    <div className="absolute top-[5.5rem] right-3 z-10 flex max-w-[calc(100%-1.5rem)] justify-end">
       <div className="flex items-center gap-3 rounded-full border border-voice/50 bg-stage/90 py-1.5 pr-1.5 pl-4 text-sm backdrop-blur" role="status">
         <span className="font-medium text-voice">소절 반복 중</span>
         <span className="font-mono text-xs text-muted-foreground tabular">

@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowLeft, ChevronDown, Download, Headphones, Loader2, SlidersHorizontal, Wand2, Lightbulb, Mic, Pause, Play, Repeat, RotateCcw, Sparkles, Target, TrendingDown, TrendingUp } from 'lucide-react'
+import { ArrowLeft, ChevronDown, Download, Eye, Headphones, Loader2, SlidersHorizontal, Wand2, Lightbulb, Mic, Pause, Play, Repeat, RotateCcw, Sparkles, Target, TrendingDown, TrendingUp } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import * as engine from '@/lib/engine'
 import { loadHistory, phraseDelta, songKey, type HistoryEntry } from '@/lib/history'
@@ -264,8 +264,11 @@ function TakeCard() {
             <MixRow label="반주" value={s.resultMr ? s.volume : 0} onChange={(v) => (v > 0.02 ? (a.setResultMr(true), a.setVolume(v)) : a.setResultMr(false))} />
             {s.guideAvailable ? <MixRow label="가이드 보컬" value={s.guideVolume} onChange={a.setGuideVolume} /> : null}
           </div>
+          <Button className="mt-4 w-full" variant="secondary" onClick={() => a.startReplay()}>
+            <Eye /> 스튜디오에서 선과 함께 다시 보기
+          </Button>
           <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-            아래 코칭의 시간 버튼을 누르면 그 부분부터 들려줘요. 반주를 끄고 내 목소리만 들으면 음이 어긋난 곳이 더 잘 들려요.
+            아래 코칭의 시간 버튼을 누르면 그 부분부터 들려줘요. 반주를 끄고 내 목소리만 들으면 음이 어긋난 곳이 더 잘 들려요. 다시 보기에서는 부를 때 그린 내 음 선이 노트 위에 맞음·어긋남 색으로 다시 그려져요.
           </p>
           <FxPanel />
         </>

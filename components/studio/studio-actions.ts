@@ -140,6 +140,8 @@ export function createActions(env: ActionEnv) {
   const toggleMic = () => (sRef.current.mic.on ? stopMicNow() : void startMicNow())
 
   const handlePitch = (frame: PitchFrame) => {
+    // 녹음 다시 보기 중에는 마이크를 쓰지 않는다 (선은 녹음 때 그린 걸 보여 줌)
+    if (live.replay) return
     const st = sRef.current
     live.pitchMidi = frame.midi
     live.micLevel = frame.level
@@ -228,6 +230,7 @@ export function createActions(env: ActionEnv) {
     if (!st.notes.length) return notify('노트가 없어서 연습을 시작할 수 없어요.')
     pause()
     if (st.view !== 'studio') set({ view: 'studio' })
+    if (live.replay) stopReplay()
     if (!sRef.current.mic.on && !(await startMicNow())) return
     await engine.prepareTake()
     resetSession()
@@ -276,6 +279,8 @@ export function createActions(env: ActionEnv) {
       realMic: st.mic.mode === 'live',
     })
     if (report.enough) saveHistory(songKey(st.project.title, st.project.duration), st.keyShift, report)
+    // 이번 연습에서 그린 선을 통째로 보관 (녹음 다시 보기)
+    live.replayTrace = live.trace.filter((pt) => pt.t >= span.t0 - 0.5 && pt.t <= span.t1 + 0.5)
     await takeDone
     const segs = takeSegs
     takeSegs = []
@@ -462,6 +467,28 @@ export function createActions(env: ActionEnv) {
     } finally {
       set({ exporting: false })
     }
+  }
+
+  /* 녹음 다시 보기: 스튜디오 화면에서 내 목소리를 들으며 그때 그린 선을 다시 본다 */
+  const startReplay = (from?: number) => {
+    const st = sRef.current
+    if (!st.takeAvailable || !live.replayTrace?.length) return notify('다시 볼 녹음이 없어요. 연습 시작으로 먼저 불러 주세요.')
+    pause()
+    live.replay = true
+    live.pitchMidi = null
+    live.cmp = null
+    sRef.current = { ...st, replay: true, view: 'studio' }
+    set({ replay: true, view: 'studio', loop: null })
+    seek(Math.max(0, from ?? st.practiceSpan?.t0 ?? 0))
+    void play()
+  }
+  const stopReplay = (back = false) => {
+    pause()
+    live.replay = false
+    live.pitchMidi = null
+    live.cmp = null
+    sRef.current = { ...sRef.current, replay: false }
+    set(back ? { replay: false, view: 'result' } : { replay: false })
   }
 
   /* 소절 반복 */
@@ -988,6 +1015,8 @@ export function createActions(env: ActionEnv) {
     clearLoop,
     listenFrom,
     setTakeVolume: (v: number) => set({ takeVolume: clamp(v, 0, 1) }),
+    startReplay,
+    stopReplay,
     setFx,
     setFxPreset,
     setFxCompare,

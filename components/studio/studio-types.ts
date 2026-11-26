@@ -148,6 +148,8 @@ export interface StudioState {
   libraryRev: number
   /** 목록에서 여는 중인 곡 */
   libraryOpening: string | null
+  /** 스튜디오에서 녹음 다시 보기 중 (내 목소리 + 그때 그린 선) */
+  replay: boolean
 }
 
 export interface PracticeState {
@@ -181,6 +183,10 @@ export interface Live {
   cmp: Compare | null
   targetNoteId: string | null
   trace: TracePoint[]
+  /** 마지막 연습에서 그린 내 음 선 전체 (녹음 다시 보기용) */
+  replayTrace: TracePoint[] | null
+  /** 녹음 다시 보기 중 */
+  replay: boolean
   noteScore: Map<string, [number, number, number]>
   windowSec: number
 }
@@ -259,6 +265,7 @@ export function createInitialState(): StudioState {
     librarySongId: null,
     libraryRev: 0,
     libraryOpening: null,
+    replay: false,
   }
 }
 
@@ -280,6 +287,8 @@ export function createLive(): Live {
     cmp: null,
     targetNoteId: null,
     trace: [],
+    replayTrace: null,
+    replay: false,
     noteScore: new Map(),
     windowSec: 9,
   }

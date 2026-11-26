@@ -280,8 +280,9 @@ export function StageCanvas() {
       ctx.fillRect(hover.current.x - 0.5, TOP - 8, 1, h - TOP - BOTTOM + 8)
     }
 
-    /* 내 목소리 궤적 */
-    const tr = live.trace
+    /* 내 목소리 궤적 — 녹음 다시 보기 중이면 녹음 때 그린 선을 재생 위치까지 */
+    const replay = live.replay && !!live.replayTrace
+    const tr = replay ? live.replayTrace! : live.trace
     ctx.lineWidth = 3.5
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
@@ -299,10 +300,23 @@ export function StageCanvas() {
       ctx.shadowBlur = 0
     }
     let prev: { t: number; midi: number | null } | null = null
-    for (let i = Math.max(0, tr.length - 2400); i < tr.length; i++) {
+    let i0 = Math.max(0, tr.length - 2400)
+    if (replay) {
+      // 전체 선에서 화면 왼쪽 끝 위치를 이진 탐색
+      let lo = 0
+      let hi = tr.length
+      while (lo < hi) {
+        const m = (lo + hi) >> 1
+        if (tr[m].t < tL - 0.2) lo = m + 1
+        else hi = m
+      }
+      i0 = lo
+    }
+    const tEnd = replay ? t : t + 0.3
+    for (let i = i0; i < tr.length; i++) {
       const p = tr[i]
       if (p.t < tL - 0.2) continue
-      if (p.t > t + 0.3) break
+      if (p.t > tEnd) break
       if (p.midi === null) {
         flush()
         seg = null
@@ -336,7 +350,7 @@ export function StageCanvas() {
     ctx.fill()
 
     /* 내 음 (헤드 위의 구슬) */
-    if (live.micOn && live.pitchMidi !== null) {
+    if ((live.micOn || live.replay) && live.pitchMidi !== null) {
       const pm = live.pitchMidi
       const py = clamp(y(pm), TOP, h - BOTTOM)
       const col = live.cmp ? TIER_COLOR[live.cmp.tier] : PAL.voice

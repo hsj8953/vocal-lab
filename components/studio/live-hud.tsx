@@ -31,16 +31,18 @@ export function LiveHud() {
     const tShown = target ? target.midi + live.shift : null
     const c = live.cmp
     setText(targetEl.current, tShown !== null ? noteName(tShown, live.notation) : '—')
-    setText(userEl.current, live.micOn && live.pitchMidi !== null ? noteName(live.pitchMidi, live.notation) : '—')
+    const on = live.micOn || live.replay
+    setText(userEl.current, on && live.pitchMidi !== null ? noteName(live.pitchMidi, live.notation) : '—')
 
-    let msg = live.micOn ? '목소리를 기다리는 중' : '마이크 꺼짐'
+    let msg = live.replay ? '녹음 다시 보기' : live.micOn ? '목소리를 기다리는 중' : '마이크 꺼짐'
     let color = 'var(--muted-foreground)'
     let diff = '—'
     if (c) {
       diff = fmtCents(c.cents)
       color = TIER_VAR[c.tier]
       msg = c.octaveOff !== 0 ? `${c.octaveOff < 0 ? '한 옥타브 낮게' : '한 옥타브 높게'} 부르는 중 · 음이름만 비교` : `${TIER_TEXT[c.tier]}`
-    } else if (live.micOn && live.playing && !target) msg = '쉬는 구간'
+    } else if (on && live.playing && !target) msg = '쉬는 구간'
+    else if (live.replay && !live.playing) msg = '녹음 다시 보기 · 일시정지'
     else if (live.micOn && !live.playing) msg = '재생하면 비교를 시작해요'
     setText(diffEl.current, diff)
     setText(tierEl.current, msg)
