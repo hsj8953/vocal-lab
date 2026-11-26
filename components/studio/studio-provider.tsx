@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import * as engine from '@/lib/engine'
+import * as tabSession from '@/lib/tab-session'
 import type { FitInfo, Player, RangeSummary } from '@/lib/engine'
 import { createActions, type Actions } from './studio-actions'
 import { createInitialState, createLive, type Live, type StudioState } from './studio-types'
@@ -215,6 +216,80 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bufKey, a])
+
+  /* ------------------------------------------------------------------
+   * 새로고침해도 이 탭의 상태 유지 (탭을 닫으면 사라짐)
+   * ------------------------------------------------------------------ */
+  const restoring = useRef(true)
+  const saveTab = useCallback(() => {
+    if (restoring.current) return
+    const st = sRef.current
+    tabSession.writeTab({
+      view: st.replay ? 'studio' : st.view,
+      railTab: st.railTab,
+      songId: st.project.real ? st.librarySongId : null,
+      keyShift: st.keyShift,
+      octaveMode: st.octaveMode,
+      source: st.source,
+      speed: st.speed,
+      pos: Math.max(0, live.current.time - (st.syncMs / 1000) * st.speed),
+      loop: st.loop,
+    })
+  }, [])
+  useEffect(() => {
+    saveTab()
+  }, [s.view, s.railTab, s.librarySongId, s.project.real, s.keyShift, s.octaveMode, s.source, s.speed, s.loop, s.playing, saveTab])
+  useEffect(() => {
+    const id = setInterval(saveTab, 2000)
+    window.addEventListener('pagehide', saveTab)
+    return () => {
+      clearInterval(id)
+      window.removeEventListener('pagehide', saveTab)
+    }
+  }, [saveTab])
+  useEffect(() => {
+    let alive = true
+    const wait = async (ok: () => boolean, ms: number) => {
+      const t0 = Date.now()
+      while (alive && !ok() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 150))
+      return alive && ok()
+    }
+    void (async () => {
+      void tabSession.cleanupPractice()
+      const tab = tabSession.readTab()
+      try {
+        if (!tab) return
+        // 설정 복원(위 effect)이 먼저 반영되게 한 박자 쉰다
+        await new Promise((r) => setTimeout(r, 0))
+        if (tab.songId) {
+          a.notify('새로고침 전 화면을 되살리는 중이에요…')
+          if (!(await a.openLibrarySong(tab.songId)) || !alive) return
+        }
+        a.setKey(tab.keyShift)
+        a.setOctaveMode(tab.octaveMode as StudioState['octaveMode'])
+        a.setSource(tab.source as StudioState['source'])
+        a.setRailTab(tab.railTab as StudioState['railTab'])
+        // 키를 바꾸면 반주를 다시 만드니 준비될 때까지 기다린 뒤 배속·위치
+        await new Promise((r) => setTimeout(r, 50))
+        await wait(() => sRef.current.bufferStatus === 'ready', 120000)
+        if (!alive) return
+        if (tab.speed && tab.speed !== 1) await a.setSpeed(tab.speed)
+        const rec = await tabSession.loadPractice()
+        if (rec && rec.songId === (tab.songId ?? 'demo')) a.restorePractice(rec)
+        if (tab.loop) a.setLoop(tab.loop.a, tab.loop.b, tab.loop.label, false)
+        a.seek(tab.pos || 0)
+        a.setView(tab.view as StudioState['view'])
+      } finally {
+        restoring.current = false
+        if (alive) saveTab()
+      }
+    })()
+    return () => {
+      alive = false
+    }
+    // 처음 한 번만
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   /* 내 설정 저장 · 복원 (음역, 싱크, 마이크 지연, 표기, 볼륨, 분석 설정) */
   useEffect(() => {

@@ -7,6 +7,7 @@ import { assignMixedReadings, attachLyrics, replaceLineTexts, splitMixedLyrics }
 import { buildReport } from '@/lib/report'
 import { saveHistory, songKey } from '@/lib/history'
 import * as library from '@/lib/library'
+import * as tabSession from '@/lib/tab-session'
 import { FX_PRESETS, createVocalChain, layerGains, pitchCurve, renderKey, renderLayers, encodeWav, type FxParams, type RenderedLayers, type VocalChain } from '@/lib/vocal-fx'
 import type { LyricLine, Lyrics } from './studio-types'
 import type { Notation } from '@/lib/music'
@@ -206,6 +207,7 @@ export function createActions(env: ActionEnv) {
   const flushSession = () => set({ session: recorder.snapshot(), sessionIsSample: false })
 
   const resetSession = () => {
+    void tabSession.clearPractice()
     recorder.reset()
     live.trace = []
     live.noteScore.clear()
@@ -292,7 +294,13 @@ export function createActions(env: ActionEnv) {
     take = null
     rendered = null
     takeSession = session
-    if (segs.length) void prepareTake(segs)
+    // 새로고침해도 이 연습을 다시 볼 수 있게 탭 저장소에 (녹음은 합치고 줄인 뒤)
+    const songId = st.project.real ? st.librarySongId : 'demo'
+    const trace = live.replayTrace
+    const saveRec = () =>
+      void tabSession.savePractice({ songId, session, span, take: take ? { ...take } : null, trace: trace ? trace.map((p) => ({ ...p })) : null })
+    if (segs.length) void prepareTake(segs).then(saveRec)
+    else saveRec()
     set((p) => ({
       practice: { phase: 'idle', count: 0, t0: 0, t1: 0 },
       practiceSpan: span,
@@ -503,10 +511,41 @@ export function createActions(env: ActionEnv) {
   }
 
   /* 소절 반복 */
-  const setLoop = (a: number, b: number, label?: string) => {
-    set({ loop: { a, b, label }, view: 'studio' })
+  const setLoop = (a: number, b: number, label?: string, start = true) => {
+    set(start ? { loop: { a, b, label }, view: 'studio' } : { loop: { a, b, label } })
+    if (!start) return
     seek(Math.max(0, a - 0.3))
     void play()
+  }
+
+  /**
+   * 새로고침 전 연습 되살리기. 노트 id는 불러올 때마다 새로 만들어지므로
+   * 시작 시간과 음으로 지금 노트에 다시 이어 붙인다.
+   */
+  const restorePractice = (rec: tabSession.PracticeRecord) => {
+    const notes = sRef.current.notes
+    const idOf = new Map<string, string>()
+    for (const nr of rec.session.perNote) {
+      const m = notes.find((n) => Math.abs(n.start - nr.start) < 0.03 && Math.abs(n.midi - nr.orig) < 0.5)
+      if (m) idOf.set(nr.id, m.id)
+    }
+    const perNote = rec.session.perNote.filter((nr) => idOf.has(nr.id)).map((nr) => ({ ...nr, id: idOf.get(nr.id)! }))
+    const session = { ...rec.session, perNote }
+    takeSession = session
+    live.replayTrace = (rec.trace as typeof live.trace | null) ?? null
+    if (rec.take) {
+      take = { ...rec.take }
+      takeRate = rec.take.rate
+      rendered = null
+    }
+    set({
+      session,
+      sessionIsSample: false,
+      practiceSpan: rec.span,
+      takeAvailable: !!rec.take,
+      takeSpeed: rec.take?.rate ?? 1,
+    })
+    if (rec.take) void applyFx(sRef.current.fx, true)
   }
   const clearLoop = () => set({ loop: null })
 
@@ -759,10 +798,13 @@ export function createActions(env: ActionEnv) {
   }
 
   /** 목록의 곡 열기 — 파일을 넣고 분석(저장된 결과를 다시 씀)한 뒤 키·MR 위치를 되돌린다 */
-  const openLibrarySong = async (id: string) => {
-    if (sRef.current.analysis.status === 'running') return
+  const openLibrarySong = async (id: string): Promise<boolean> => {
+    if (sRef.current.analysis.status === 'running') return false
     const song = await library.getSong(id)
-    if (!song) return notify('곡을 찾을 수 없어요.')
+    if (!song) {
+      notify('곡을 찾을 수 없어요.')
+      return false
+    }
     set({ libraryOpening: id })
     try {
       pause()
@@ -774,14 +816,16 @@ export function createActions(env: ActionEnv) {
       sRef.current = { ...sRef.current, inputs }
       set({ inputs, lyrics: null })
       if (inputs.lyrics?.file) await loadLyrics(inputs.lyrics.file, true)
-      if (!(await analyze(true))) return
+      if (!(await analyze(true))) return false
       set({ keyShift: clamp(song.settings.keyShift ?? 0, -7, 7), librarySongId: id })
+      sRef.current = { ...sRef.current, librarySongId: id }
       const want = song.settings.mrOffsetMs
       // 화면 상태는 아직 갱신 전일 수 있어서 엔진에서 직접 읽는다
       const al = (engine.realSong() as { mrAlign?: { offset: number } | null }).mrAlign
       const cur = al ? Math.round(al.offset * 1000) : undefined
       if (want !== undefined && cur !== undefined && Math.abs(want - cur) >= 1) nudgeMr((want - cur) / 1000)
       void library.patchSong(id, (x) => ({ ...x, opened: Date.now() }))
+      return true
     } finally {
       set((p) => ({ libraryOpening: null, libraryRev: p.libraryRev + 1 }))
     }
@@ -1037,6 +1081,7 @@ export function createActions(env: ActionEnv) {
     },
     setShowOrigLine: (showOrigLine: boolean) => set({ showOrigLine }),
     setOrigLineAlways: (origLineAlways: boolean) => set({ origLineAlways }),
+    restorePractice,
     setFx,
     setFxPreset,
     setFxCompare,
