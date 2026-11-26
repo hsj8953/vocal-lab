@@ -1595,6 +1595,60 @@ export const realLoadLyrics = (): Promise<any> => real.loadLyrics()
 export const realSong = () => real.SONG
 /** 원곡 보컬의 음 높이(원곡 키, MIDI) — 없으면 NaN */
 export const realOrigPitchAt = (t: number): number => real.origPitchAt(t)
+/**
+ * 원곡 보컬 음 곡선을 노트에 맞춰 옥타브 정리.
+ * 음 높이 추적이 가끔 한 옥타브 위·아래를 잡으므로, 끊기지 않고 이어진 구간마다
+ * 겹치는(없으면 가까운) 노트의 음과 가장 가까운 옥타브로 통째로 옮긴다. 모양(꺾기·떨림)은 그대로.
+ */
+export function foldCurveToNotes(curve: { t0: number; hop: number; midi: Float32Array }, notes: Note[]): Float32Array {
+  const src = curve.midi
+  const out = new Float32Array(src.length).fill(NaN)
+  const sorted = [...notes].sort((a, b) => a.start - b.start)
+  const tAt = (i: number) => curve.t0 + i * curve.hop
+  // 구간 나누기: 소리 없음 또는 큰 도약에서 끊는다
+  let a = 0
+  while (a < src.length) {
+    if (!Number.isFinite(src[a])) {
+      a++
+      continue
+    }
+    let b = a
+    while (b + 1 < src.length && Number.isFinite(src[b + 1]) && Math.abs(src[b + 1] - src[b]) <= 1.5) b++
+    const seg: number[] = []
+    for (let i = a; i <= b; i++) seg.push(src[i])
+    seg.sort((x, y) => x - y)
+    const med = seg[seg.length >> 1]
+    const ta = tAt(a)
+    const tb = tAt(b)
+    // 겹치는 노트 (겹친 길이로 가중), 없으면 가장 가까운 노트 (3초 안)
+    let wsum = 0
+    let acc = 0
+    for (const n of sorted) {
+      if (n.start > tb) break
+      const ov = Math.min(tb, n.start + n.dur) - Math.max(ta, n.start)
+      if (ov > 0) {
+        wsum += ov
+        acc += ov * n.midi
+      }
+    }
+    let ref = wsum > 0 ? acc / wsum : NaN
+    if (!Number.isFinite(ref)) {
+      let best = 3
+      for (const n of sorted) {
+        const d = n.start > tb ? n.start - tb : ta > n.start + n.dur ? ta - (n.start + n.dur) : 0
+        if (d < best) {
+          best = d
+          ref = n.midi
+        }
+      }
+    }
+    const k = Number.isFinite(ref) ? Math.round((ref - med) / 12) : 0
+    for (let i = a; i <= b; i++) out[i] = src[i] + 12 * k
+    a = b + 1
+  }
+  return out
+}
+
 /** 원곡 보컬 음 높이 곡선 전체 (원곡 키 MIDI, 소리 없는 곳은 NaN) — 분석 전이거나 원곡이 없으면 null */
 export const realOrigCurve = (): { t0: number; hop: number; midi: Float32Array } | null => {
   const m = (real.SONG as { lastMel?: { hop: number; midi: Float32Array } | null }).lastMel

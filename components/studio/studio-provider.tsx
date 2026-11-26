@@ -71,6 +71,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   )
 
   const summary = useMemo(() => engine.summarizeNotes(s.notes), [s.notes])
+  /* 원곡 보컬 음 선 — 노트 옥타브에 맞춰 정리 (노트를 고칠 때마다 다시) */
+  const origCurve = useMemo(() => {
+    if (!s.project.real || s.analysis.status !== 'done') return null
+    const c = engine.realOrigCurve()
+    return c ? { ...c, midi: engine.foldCurveToNotes(c, s.notes) } : null
+  }, [s.project.real, s.analysis.status, s.notes])
   const d = useMemo<Derived>(() => {
     const octave = engine.resolveOctave(summary, s.userRange, s.keyShift, s.octaveMode)
     const shift = s.keyShift + octave
@@ -91,7 +97,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   L.selection = new Set(s.selection)
   L.notation = s.notation
   L.edit = s.view === 'studio' && s.railTab === 'edit'
-  L.origCurve = s.project.real && s.analysis.status === 'done' ? engine.realOrigCurve() : null
+  L.origCurve = origCurve
   L.origLine = s.showOrigLine && (L.edit || s.origLineAlways)
   L.tool = s.tool
   L.micOn = s.mic.on
