@@ -154,6 +154,12 @@ export interface StudioState {
   showOrigLine: boolean
   /** 연습할 때도 원곡 보컬 음 선 보기 */
   origLineAlways: boolean
+  /** 재생 배속 (음 높이는 그대로) */
+  speed: number
+  /** 배속 바꾸는 중 진행률 */
+  speedBusy: number | null
+  /** 마지막 녹음을 한 배속 */
+  takeSpeed: number
 }
 
 export interface PracticeState {
@@ -276,6 +282,9 @@ export function createInitialState(): StudioState {
     replay: false,
     showOrigLine: true,
     origLineAlways: false,
+    speed: 1,
+    speedBusy: null,
+    takeSpeed: 1,
   }
 }
 

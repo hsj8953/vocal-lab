@@ -49,7 +49,9 @@ export function createActions(env: ActionEnv) {
     noticeTimer = setTimeout(() => set({ notice: null }), 5200)
   }
 
-  const syncSec = () => sRef.current.syncMs / 1000
+  // 싱크·마이크 지연은 실제 시간이라 배속만큼 곡 시간으로 바꾼다
+  const spd = () => playerRef.current?.getSpeed() ?? 1
+  const syncSec = () => (sRef.current.syncMs / 1000) * spd()
 
   /* ------------------------------ 재생 ------------------------------ */
 
@@ -64,12 +66,14 @@ export function createActions(env: ActionEnv) {
   /* 연습 녹음: 재생 중인 동안만 마이크 소리를 모은다 */
   let takeSegs: engine.TakeSegment[] = []
   let taking = false
-  const takeTime = () => (playerRef.current?.getTime() ?? 0) + syncSec() - sRef.current.micLatencyMs / 1000
+  const takeTime = () => (playerRef.current?.getTime() ?? 0) + syncSec() - (sRef.current.micLatencyMs / 1000) * spd()
   let takeDone: Promise<void> = Promise.resolve()
+  /** 이번 연습을 한 배속 */
+  let takeRate = 1
   const beginTake = () => {
     if (taking) return
     taking = true
-    void engine.startTake(takeTime).then((ok) => {
+    void engine.startTake(takeTime, playerRef.current?.getSpeed() ?? 1).then((ok) => {
       if (!ok) taking = false
     })
   }
@@ -169,7 +173,7 @@ export function createActions(env: ActionEnv) {
       return
     }
     // 마이크로 들어온 소리는 micLatency 만큼 늦게 도착한다 → 그만큼 앞 시간의 노트와 비교
-    const t = live.time - st.micLatencyMs / 1000
+    const t = live.time - (st.micLatencyMs / 1000) * spd()
     const target = engine.noteAt(live.notes, t)
     if (frame.midi === null) {
       const last = live.trace[live.trace.length - 1]
@@ -235,6 +239,7 @@ export function createActions(env: ActionEnv) {
     await engine.prepareTake()
     resetSession()
     takeSegs = []
+    takeRate = playerRef.current?.getSpeed() ?? 1
     take = null
     rendered = null
     playerRef.current?.loadTakeLayers(null)
@@ -294,6 +299,7 @@ export function createActions(env: ActionEnv) {
       session,
       sessionIsSample: false,
       takeAvailable: segs.length > 0,
+      takeSpeed: takeRate,
       historyRev: p.historyRev + 1,
       view: 'result',
     }))
@@ -302,7 +308,7 @@ export function createActions(env: ActionEnv) {
 
   /* ------------------------------ 녹음 효과 ------------------------------ */
 
-  let take: { t0: number; data: Float32Array; sr: number } | null = null
+  let take: { t0: number; data: Float32Array; sr: number; rate: number } | null = null
   let takeSession: engine.SessionStats | null = null
   let rendered: { key: string; layers: RenderedLayers } | null = null
   let chainObj: VocalChain | null = null
@@ -334,7 +340,7 @@ export function createActions(env: ActionEnv) {
         /* 낮추지 못하면 원래대로 */
       }
     }
-    take = { t0, data, sr }
+    take = { t0, data, sr, rate: takeRate }
     await applyFx(sRef.current.fx, true)
   }
 
@@ -352,14 +358,14 @@ export function createActions(env: ActionEnv) {
       const tok = ++renderTok
       set({ fxBusy: 0 })
       const tk = take
-      const curve = pitchCurve(takeSession, tk.t0, tk.data.length / tk.sr)
+      const curve = pitchCurve(takeSession, tk.t0, tk.data.length / tk.sr, tk.rate)
       const layers = await renderLayers(tk, curve, sRef.current.notes, live.shift, fx, (r) => tok === renderTok && set({ fxBusy: r }))
       if (tok !== renderTok || take !== tk) return
       rendered = { key, layers }
       const mk = (id: string, chans: Float32Array[]) => {
         const b = ctx.createBuffer(chans.length, chans[0].length, tk.sr)
         chans.forEach((c, i) => b.copyToChannel(c as Float32Array<ArrayBuffer>, i))
-        return { id, t0: tk.t0, buf: b, gain: 0 }
+        return { id, t0: tk.t0, buf: b, gain: 0, rate: tk.rate }
       }
       const L = [mk('raw', [layers.raw])]
       if (layers.tuned) L.push(mk('tuned', [layers.tuned]))
@@ -410,11 +416,14 @@ export function createActions(env: ActionEnv) {
     if (st.fxBusy !== null) return notify('효과를 계산하는 중이에요. 잠시 후 다시 눌러 주세요.')
     set({ exporting: true })
     try {
-      const span = st.practiceSpan ?? { t0: take.t0, t1: take.t0 + take.data.length / take.sr }
+      const span = st.practiceSpan ?? { t0: take.t0, t1: take.t0 + (take.data.length / take.sr) * take.rate }
       const a0 = Math.max(0, span.t0 - 0.3)
       const a1 = span.t1 + 2
       const sr = 44100
-      const oc = new OfflineAudioContext(2, Math.ceil((a1 - a0) * sr), sr)
+      // 저장은 연습한 배속 그대로 (지금 재생 배속)
+      const pb = p.getPlayback()
+      const sp = pb.speed
+      const oc = new OfflineAudioContext(2, Math.ceil(((a1 - a0) / sp) * sr), sr)
       const lim = oc.createDynamicsCompressor()
       lim.threshold.value = -2
       lim.knee.value = 0
@@ -422,12 +431,13 @@ export function createActions(env: ActionEnv) {
       lim.attack.value = 0.002
       lim.release.value = 0.1
       lim.connect(oc.destination)
-      const mr = p.getBuffer()
+      const mr = pb.buf
       if (mr && st.resultMr && !st.muted) {
         const g = oc.createGain()
         g.gain.value = st.volume * st.volume
         const src = oc.createBufferSource()
         src.buffer = mr
+        src.playbackRate.value = sp
         src.connect(g).connect(lim)
         src.start(0, Math.min(a0, mr.duration))
       }
@@ -443,10 +453,11 @@ export function createActions(env: ActionEnv) {
         chans.forEach((c, i) => b.copyToChannel(c as Float32Array<ArrayBuffer>, i))
         const src = oc.createBufferSource()
         src.buffer = b
+        src.playbackRate.value = sp / take!.rate
         const g = oc.createGain()
         g.gain.value = gain
         src.connect(g).connect(chain.input)
-        src.start(Math.max(0, take!.t0 - a0), Math.max(0, a0 - take!.t0))
+        src.start(Math.max(0, (take!.t0 - a0) / sp), Math.max(0, (a0 - take!.t0) / take!.rate))
       }
       add([l.raw], gains.raw)
       add(l.tuned ? [l.tuned] : null, gains.tuned)
@@ -1017,6 +1028,13 @@ export function createActions(env: ActionEnv) {
     setTakeVolume: (v: number) => set({ takeVolume: clamp(v, 0, 1) }),
     startReplay,
     stopReplay,
+    setSpeed: async (speed: number) => {
+      const st = sRef.current
+      if (st.practice.phase !== 'idle') return notify('연습 중에는 배속을 바꿀 수 없어요.')
+      if (live.replay && Math.abs(speed - st.takeSpeed) > 1e-3) return notify(`녹음 다시 보기는 녹음한 배속(${st.takeSpeed}x)으로만 들을 수 있어요.`)
+      set({ speed })
+      await playerRef.current?.setSpeed(speed)
+    },
     setShowOrigLine: (showOrigLine: boolean) => set({ showOrigLine }),
     setOrigLineAlways: (origLineAlways: boolean) => set({ origLineAlways }),
     setFx,

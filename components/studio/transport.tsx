@@ -5,6 +5,7 @@ import { useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { fmtTime, noteName } from '@/lib/music'
 import { Mixer } from './mixer'
+import { SpeedControl } from './speed-control'
 import { OverviewCanvas } from './overview-canvas'
 import { useFrame, useStudio } from './studio-provider'
 import { Seg } from './ui-bits'
@@ -68,6 +69,7 @@ export function Transport() {
         />
 
         <Mixer />
+        <SpeedControl />
 
         <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
           {loading ? <span role="status">{s.bufferMsg ?? '음원 준비 중…'}</span> : null}

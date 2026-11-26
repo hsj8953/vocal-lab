@@ -104,7 +104,9 @@ export interface PitchCurve {
  * @param t0 녹음 첫 샘플이 곡의 몇 초인지
  * @param dur 녹음 길이(초)
  */
-export function pitchCurve(session: SessionStats, t0: number, dur: number): PitchCurve {
+export function pitchCurve(session: SessionStats, t0: number, dur: number, rate = 1): PitchCurve {
+  // 곡 시간을 녹음 시간(배속으로 부른 녹음)으로 바꿔서 칸을 정한다
+  const R = (songSec: number) => songSec / rate
   const n = Math.ceil(dur / HOP) + 1
   const user = new Float32Array(n).fill(NaN)
   const target = new Float32Array(n).fill(NaN)
@@ -112,18 +114,18 @@ export function pitchCurve(session: SessionStats, t0: number, dur: number): Pitc
   session.perNote.forEach((nr, k) => {
     const s = nr.samples
     // 노트 범위 전체에 목표 음
-    const a = Math.max(0, Math.floor((nr.start - t0) / HOP))
-    const b = Math.min(n - 1, Math.ceil((nr.start + nr.dur - t0) / HOP))
+    const a = Math.max(0, Math.floor(R(nr.start - t0) / HOP))
+    const b = Math.min(n - 1, Math.ceil(R(nr.start + nr.dur - t0) / HOP))
     for (let i = a; i <= b; i++) {
       target[i] = nr.midi
       noteIdx[i] = k
     }
     // 내 음: 측정한 프레임 사이(60ms 안)는 이어서 채운다
     for (let j = 0; j < s.length; j++) {
-      const ta = nr.start + s[j][0] - t0
+      const ta = R(nr.start + s[j][0] - t0)
       const ma = nr.midi + s[j][1] / 100
       const nx = s[j + 1]
-      const tb = nx && nx[0] - s[j][0] <= 0.06 ? nr.start + nx[0] - t0 : ta + 0.02
+      const tb = nx && nx[0] - s[j][0] <= 0.06 ? R(nr.start + nx[0] - t0) : ta + 0.02
       const mb = nx && nx[0] - s[j][0] <= 0.06 ? nr.midi + nx[1] / 100 : ma
       const ia = Math.max(0, Math.round(ta / HOP))
       const ib = Math.min(n - 1, Math.round(tb / HOP))

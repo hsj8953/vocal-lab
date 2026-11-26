@@ -927,6 +927,12 @@ export interface Player {
   setTakeChain: (chain: { input: AudioNode; output: AudioNode } | null) => void
   /** 지금 재생 중인 반주 버퍼 (저장용) */
   getBuffer: () => AudioBuffer | null
+  /** 배속을 반영한 실제 재생 버퍼와 배속 (저장용) */
+  getPlayback: () => { buf: AudioBuffer | null; speed: number }
+  /** 배속 (음 높이는 그대로). 바꾸는 동안 onSpeedProgress로 진행률 */
+  setSpeed: (speed: number) => Promise<void>
+  getSpeed: () => number
+  onSpeedProgress: (cb: (r: number | null) => void) => void
   dispose: () => void
 }
 
@@ -936,6 +942,8 @@ export interface TakeLayer {
   t0: number
   buf: AudioBuffer
   gain: number
+  /** 녹음할 때의 배속 (곡 1초가 녹음 1/rate초) */
+  rate?: number
 }
 
 /** 녹음한 내 목소리 한 구간 — t0: 곡에서 시작하는 시간(초) */
@@ -960,7 +968,24 @@ export function createPlayer(): Player {
   let guideSrc: AudioBufferSourceNode | null = null
   let guideGain: GainNode | null = null
   let guideVol = 0
-  let layers: { id: string; t0: number; buf: AudioBuffer; g: GainNode }[] = []
+  let layers: { id: string; t0: number; buf: AudioBuffer; g: GainNode; rate: number }[] = []
+  /* 배속: base*는 원래 버퍼, buffer/guideBuf는 배속에 맞춰 음 높이를 보정한 재생용 */
+  let speed = 1
+  let baseBuffer: AudioBuffer | null = null
+  let baseGuide: AudioBuffer | null = null
+  const compCache = new WeakMap<AudioBuffer, Map<number, AudioBuffer>>()
+  let speedProg: ((r: number | null) => void) | null = null
+  let speedTok = 0
+  const compensate = async (b: AudioBuffer, s: number): Promise<AudioBuffer> => {
+    if (Math.abs(s - 1) < 1e-3) return b
+    let m = compCache.get(b)
+    if (!m) compCache.set(b, (m = new Map()))
+    const hit = m.get(s)
+    if (hit) return hit
+    const out = (await real.speedCompensated(b, s, (p: number) => speedProg?.(p))) as AudioBuffer
+    m.set(s, out)
+    return out
+  }
   let takeSrcs: AudioBufferSourceNode[] = []
   let takeBus: GainNode | null = null
   let takeGain: GainNode | null = null
@@ -1017,11 +1042,13 @@ export function createPlayer(): Player {
     stopTake()
     if (!ctx || !takeBus || !layers.length) return
     for (const L of layers) {
-      if (L.t0 + L.buf.duration <= at) continue
+      // 녹음은 rate 배속으로 부른 것: 곡 시간 T ↔ 녹음 (T − t0)/rate 초
+      if (L.t0 + L.buf.duration * L.rate <= at) continue
       const g = ctx.createBufferSource()
       g.buffer = L.buf
+      g.playbackRate.value = speed / L.rate
       g.connect(L.g)
-      g.start(when + Math.max(0, L.t0 - at), Math.max(0, at - L.t0))
+      g.start(when + Math.max(0, (L.t0 - at) / speed), Math.max(0, (at - L.t0) / L.rate))
       takeSrcs.push(g)
     }
   }
@@ -1041,11 +1068,12 @@ export function createPlayer(): Player {
     if (!guideBuf || !ctx || !guideGain || at >= guideBuf.duration) return
     const g = ctx.createBufferSource()
     g.buffer = guideBuf
+    g.playbackRate.value = speed
     g.connect(guideGain)
     g.start(when, at)
     guideSrc = g
   }
-  const rawPos = () => (playing && ctx ? offset + (ctx.currentTime - startedAt) : offset)
+  const rawPos = () => (playing && ctx ? offset + (ctx.currentTime - startedAt) * speed : offset)
   const stopSrc = () => {
     token++
     if (src) {
@@ -1067,6 +1095,7 @@ export function createPlayer(): Player {
     if (offset >= buffer.duration - 0.02) offset = 0
     const s = c.createBufferSource()
     s.buffer = buffer
+    s.playbackRate.value = speed
     s.connect(gain!)
     const my = ++token
     s.onended = () => {
@@ -1088,13 +1117,31 @@ export function createPlayer(): Player {
 
   return {
     load(buf) {
-      const was = playing
-      const pos = rawPos()
-      stopSrc()
-      playing = false
-      buffer = buf
-      offset = Math.min(pos, buf.duration)
-      if (was) startSrc()
+      baseBuffer = buf
+      const apply = (b: AudioBuffer) => {
+        const was = playing
+        const pos = rawPos()
+        stopSrc()
+        playing = false
+        buffer = b
+        offset = Math.min(pos, b.duration)
+        if (was) startSrc()
+      }
+      if (Math.abs(speed - 1) < 1e-3) return apply(buf)
+      // 배속 중이면 보정한 버퍼가 준비될 때까지 기존 것을 그대로 쓴다
+      const tok = ++speedTok
+      const sp = speed
+      void compensate(buf, sp)
+        .then((b) => {
+          if (tok === speedTok && sp === speed && baseBuffer === buf) apply(b)
+        })
+        .finally(() => tok === speedTok && speedProg?.(null))
+      if (!buffer) {
+        // 처음 불러온 거면 일단 원래 속도로라도 쓸 수 있게
+        speed = 1
+        apply(buf)
+        speed = sp
+      }
     },
     async play() {
       if (playing) return
@@ -1115,7 +1162,7 @@ export function createPlayer(): Player {
       if (was) startSrc()
     },
     getTime() {
-      const lat = ctx ? (ctx.outputLatency || 0) + (ctx.baseLatency || 0) : 0
+      const lat = ctx ? ((ctx.outputLatency || 0) + (ctx.baseLatency || 0)) * speed : 0
       const t = playing ? rawPos() - lat : offset
       return Math.max(0, buffer ? Math.min(t, buffer.duration) : t)
     },
@@ -1128,9 +1175,17 @@ export function createPlayer(): Player {
       endedCb = cb
     },
     loadGuide(buf) {
-      guideBuf = buf
-      if (playing && ctx) startGuide(ctx.currentTime + 0.02, rawPos() + 0.02)
-      else if (!buf) stopGuide()
+      baseGuide = buf
+      const apply = (b: AudioBuffer | null) => {
+        guideBuf = b
+        if (playing && ctx) startGuide(ctx.currentTime + 0.02, rawPos() + 0.02)
+        else if (!b) stopGuide()
+      }
+      if (!buf || Math.abs(speed - 1) < 1e-3) return apply(buf)
+      const sp = speed
+      void compensate(buf, sp).then((b) => {
+        if (sp === speed && baseGuide === buf) apply(b)
+      })
     },
     setGuideVolume(v) {
       guideVol = v
@@ -1145,7 +1200,7 @@ export function createPlayer(): Player {
         const g = ctx!.createGain()
         g.gain.value = L.gain
         g.connect(takeBus!)
-        return { id: L.id, t0: L.t0, buf: L.buf, g }
+        return { id: L.id, t0: L.t0, buf: L.buf, g, rate: L.rate ?? 1 }
       })
       if (playing && ctx) startTake(ctx.currentTime + 0.02, rawPos() + 0.02)
     },
@@ -1159,7 +1214,34 @@ export function createPlayer(): Player {
       chain = c
       wireChain()
     },
-    getBuffer: () => buffer,
+    getBuffer: () => baseBuffer ?? buffer,
+    getPlayback: () => ({ buf: buffer, speed }),
+    getSpeed: () => speed,
+    onSpeedProgress(cb) {
+      speedProg = cb
+    },
+    async setSpeed(s) {
+      s = Math.max(0.25, Math.min(2, s))
+      if (Math.abs(s - speed) < 1e-3 && (!baseBuffer || buffer)) return
+      const tok = ++speedTok
+      speedProg?.(0)
+      try {
+        const nb = baseBuffer ? await compensate(baseBuffer, s) : null
+        const ng = baseGuide ? await compensate(baseGuide, s) : null
+        if (tok !== speedTok) return
+        const was = playing
+        const pos = rawPos()
+        stopSrc()
+        playing = false
+        speed = s
+        if (nb) buffer = nb
+        guideBuf = ng
+        offset = buffer ? Math.min(pos, buffer.duration) : pos
+        if (was) startSrc()
+      } finally {
+        if (tok === speedTok) speedProg?.(null)
+      }
+    },
     setTakeVolume(v) {
       takeVol = v
       if (takeGain) takeGain.gain.value = v * v
@@ -1381,6 +1463,8 @@ interface TakeState {
   /** (마이크 오디오 시각, 곡 시각) 짝 — 둘의 차이로 샘플 위치를 곡 시간으로 바꾼다 */
   offs: number[]
   sr: number
+  /** 배속: 녹음 1초 = 곡 rate초 */
+  rate: number
   getT: () => number
   stop: () => void
 }
@@ -1430,13 +1514,13 @@ export function prepareTake(): Promise<boolean> {
 }
 
 /** 마이크 녹음 시작. getSongTime: 지금 마이크에 들어오는 소리가 곡의 몇 초인지 */
-export async function startTake(getSongTime: () => number): Promise<boolean> {
+export async function startTake(getSongTime: () => number, rate = 1): Promise<boolean> {
   stopTake()
   if (!mic?.ctx || !mic.node) return false
   const ctx = mic.ctx
   const node = mic.node
-  const tk: TakeState = { chunks: [], offs: [], sr: ctx.sampleRate, getT: getSongTime, stop: () => {} }
-  const stamp = () => tk.offs.push(tk.getT() - ctx.currentTime)
+  const tk: TakeState = { chunks: [], offs: [], sr: ctx.sampleRate, rate, getT: getSongTime, stop: () => {} }
+  const stamp = () => tk.offs.push(tk.getT() - tk.rate * ctx.currentTime)
   take = tk
   if (await ensureWorklet(ctx)) {
     if (take !== tk) return false
@@ -1499,7 +1583,7 @@ export async function stopTake(): Promise<TakeSegment | null> {
   // 곡 시각 − 마이크 오디오 시각: 화면이 바빠 늦게 잰 값이 섞여도 흔들리지 않게 중앙값
   const offs = [...tk.offs].sort((a, b) => a - b)
   const off = offs[offs.length >> 1]
-  return { t0: off + f0 / tk.sr, sr: tk.sr, data }
+  return { t0: off + (tk.rate * f0) / tk.sr, sr: tk.sr, data }
 }
 
 export function stopMic(): void {

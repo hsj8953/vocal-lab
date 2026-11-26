@@ -227,6 +227,7 @@ function TakeCard() {
     <section className="rounded-2xl border border-border bg-card p-5">
       <h2 className="flex items-center gap-1.5 text-sm font-semibold">
         <Headphones className="size-4 text-voice" /> 내 노래 다시 듣기
+        {s.takeAvailable && s.takeSpeed !== 1 ? <span className="ml-1 rounded bg-voice/15 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-voice">{s.takeSpeed}x로 연습</span> : null}
       </h2>
       {s.takeAvailable && span ? (
         <>

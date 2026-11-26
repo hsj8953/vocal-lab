@@ -114,6 +114,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     const player = engine.createPlayer()
     playerRef.current = player
     player.setVolume(sRef.current.muted ? 0 : sRef.current.volume)
+    player.onSpeedProgress((r) => setS((p) => (p.speedBusy === r ? p : { ...p, speedBusy: r })))
     player.onEnded(() => {
       live.current.playing = false
       setS((p) => ({ ...p, playing: false }))
@@ -124,7 +125,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     const loop = (now: number) => {
       const l = live.current
       l.playing = player.isPlaying()
-      l.time = player.getTime() + sRef.current.syncMs / 1000
+      l.time = player.getTime() + (sRef.current.syncMs / 1000) * player.getSpeed()
       const st = sRef.current
       // 녹음 다시 보기: 지금 시각에 녹음 때 그린 음을 HUD와 구슬에 보여 준다
       if (l.replay && l.replayTrace) {
@@ -310,6 +311,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     const off = s.muted || ((s.view === 'result' || s.replay) && !s.resultMr)
     playerRef.current?.setVolume(off ? 0 : s.volume)
   }, [s.volume, s.muted, s.view, s.resultMr, s.replay])
+
+  /* 녹음을 들을 때(결과 화면·다시 보기)는 녹음한 배속으로 */
+  useEffect(() => {
+    if ((s.view === 'result' || s.replay) && s.takeAvailable && Math.abs(s.speed - s.takeSpeed) > 1e-3) void a.setSpeed(s.takeSpeed)
+  }, [s.view, s.replay, s.takeAvailable, s.speed, s.takeSpeed, a])
 
   /* 녹음한 내 목소리는 결과 화면에서만 들린다 */
   useEffect(() => {
