@@ -2,7 +2,7 @@
 
 import { AlertTriangle, Download, FileText, Loader2, PencilLine, RefreshCw, Wand2, X } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { METHOD_LABEL, realSeparatedWav } from '@/lib/engine'
+import { METHOD_LABEL, realSepDiag, realSeparatedWav } from '@/lib/engine'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
@@ -427,9 +427,36 @@ function SeparationSection() {
           {running ? an.stage : '보컬 분리하고 다시 분석'}
         </Button>
       ) : null}
+      {!demo && !hasVocalFile ? <GpuInfo /> : null}
       {!demo && !hasVocalFile && sep ? <SeparatedDownload title={s.project.title} /> : null}
       {!demo && !hasVocalFile && !sep ? <p className="mt-2 text-[11px] text-muted-foreground">처음 한 번 모델 64MB를 받고, 곡마다 몇 분 걸려요. 결과는 저장해 둬서 같은 곡은 바로 끝나요.</p> : null}
     </Section>
+  )
+}
+
+/** 분리에 그래픽카드를 썼는지, 못 썼으면 왜인지 + 강제 시도 */
+function GpuInfo() {
+  const { s, a } = useStudio()
+  const d = realSepDiag()
+  const ran = d.ep !== null
+  const cpu = ran && d.ep !== 'webgpu'
+  return (
+    <div className="mt-3 rounded-lg border border-border p-2.5 text-[11px] leading-relaxed">
+      <p className="font-medium text-foreground">
+        분리 장치:{' '}
+        {!ran ? <span className="text-muted-foreground">이번에 연 뒤로 아직 분리하지 않았어요</span> : d.ep === 'webgpu' ? <span className="text-voice">그래픽카드 (빠름)</span> : <span className="text-caution">CPU (느림)</span>}
+      </p>
+      {d.gpu ? <p className="text-muted-foreground">그래픽카드: {d.gpu}</p> : null}
+      {cpu && d.reason ? <p className="mt-1 text-caution">이유: {d.reason}</p> : null}
+      {ran && d.ep === 'webgpu' && d.reason ? <p className="mt-1 text-muted-foreground">{d.reason}</p> : null}
+      <label htmlFor="forcegpu" className="mt-2 flex items-center justify-between gap-3 text-muted-foreground">
+        <span>
+          그래픽카드로 강제 시도
+          <span className="block text-[10px]">소프트웨어 그래픽으로 판단돼 CPU를 쓸 때 켜 보세요. 오류가 나면 자동으로 CPU로 돌아가요.</span>
+        </span>
+        <Switch id="forcegpu" checked={s.analysis.forceGpu} onCheckedChange={(v) => a.setForceGpu(!!v)} />
+      </label>
+    </div>
   )
 }
 

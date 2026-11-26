@@ -291,6 +291,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  /* AI 분리 설정을 엔진에 */
+  useEffect(() => {
+    engine.realSetSepOptions({ forceGpu: s.analysis.forceGpu })
+  }, [s.analysis.forceGpu])
+
   /* 내 설정 저장 · 복원 (음역, 싱크, 마이크 지연, 표기, 볼륨, 분석 설정) */
   useEffect(() => {
     try {
@@ -325,7 +330,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           notation: s.notation,
           volume: s.volume,
           guideVolume: s.guideVolume,
-          analysis: { sensitivity: s.analysis.sensitivity, splitSyllables: s.analysis.splitSyllables, autofill: s.analysis.autofill, pitchModel: s.analysis.pitchModel, crepeModel: s.analysis.crepeModel, separate: s.analysis.separate },
+          analysis: { sensitivity: s.analysis.sensitivity, splitSyllables: s.analysis.splitSyllables, autofill: s.analysis.autofill, pitchModel: s.analysis.pitchModel, crepeModel: s.analysis.crepeModel, separate: s.analysis.separate, forceGpu: s.analysis.forceGpu },
           fx: s.fx,
           fxPreset: s.fxPreset,
           showOrigLine: s.showOrigLine,

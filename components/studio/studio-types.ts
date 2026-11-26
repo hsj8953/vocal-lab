@@ -40,6 +40,8 @@ export interface AnalysisState {
   crepeModel: CrepeModel
   /** 보컬 파일이 없을 때 AI로 보컬·반주 분리 */
   separate: boolean
+  /** AI 분리 때 그래픽카드 강제 시도 */
+  forceGpu: boolean
   info: RealInfo | null
 }
 
@@ -197,6 +199,9 @@ export interface Live {
   origCurve: { t0: number; hop: number; midi: Float32Array } | null
   /** 원곡 보컬 음 선을 그릴지 */
   origLine: boolean
+  /** 노트 점검 표시: 빠진 곳 [시작, 끝, 음(원곡 키)]과 의심 노트 */
+  checkGaps: [number, number, number][]
+  checkIds: Set<string>
   /** 마지막 연습에서 그린 내 음 선 전체 (녹음 다시 보기용) */
   replayTrace: TracePoint[] | null
   /** 녹음 다시 보기 중 */
@@ -234,6 +239,7 @@ export function createInitialState(): StudioState {
       pitchModel: 'classic',
       crepeModel: 'small',
       separate: true,
+      forceGpu: false,
       info: null,
     },
     align: { status: 'done', result: engine.DEMO_ALIGN },
@@ -309,6 +315,8 @@ export function createLive(): Live {
     replayTrace: null,
     origCurve: null,
     origLine: false,
+    checkGaps: [],
+    checkIds: new Set(),
     replay: false,
     noteScore: new Map(),
     windowSec: 9,

@@ -165,6 +165,26 @@ export function StageCanvas() {
     const peakShown = peak ? peak.midi + shift : -Infinity
     const peakWorthy = !!peak && peak.start > t && (peakShown >= songHigh - 1.5 || peakShown > user.high - 0.5)
 
+    /* 노트 점검: 빠진 곳 (주황 상자) */
+    if (live.edit && live.checkGaps.length) {
+      ctx.save()
+      ctx.setLineDash([4, 3])
+      ctx.lineWidth = 1.5
+      for (const [ga, gb, gm] of live.checkGaps) {
+        const gx = x(ga)
+        const gw = (gb - ga) * pxs
+        if (gx > w || gx + gw < GUTTER) continue
+        const gy = y(gm + shift)
+        ctx.fillStyle = 'oklch(0.8 0.15 75 / 0.14)'
+        ctx.strokeStyle = 'oklch(0.8 0.15 75 / 0.85)'
+        ctx.beginPath()
+        ctx.roundRect(gx, gy - noteH * 1.6, Math.max(gw, 6), noteH * 3.2, 6)
+        ctx.fill()
+        ctx.stroke()
+      }
+      ctx.restore()
+    }
+
     /* 노트 */
     ctx.font = `700 12px ${SANS}`
     ctx.textBaseline = 'middle'
@@ -204,6 +224,15 @@ export function StageCanvas() {
         ctx.lineWidth = 2
         pill(ctx, x1 - 1, yc - noteH / 2 - 1, Math.max(nw, 4) + 2, noteH + 2)
         ctx.stroke()
+      } else if (live.edit && live.checkIds.has(n.id)) {
+        // 노트 점검: 의심 노트 (점선 테두리)
+        ctx.save()
+        ctx.setLineDash([3, 3])
+        ctx.strokeStyle = PAL.caution
+        ctx.lineWidth = 2
+        pill(ctx, x1 - 2, yc - noteH / 2 - 2, Math.max(nw, 4) + 4, noteH + 4)
+        ctx.stroke()
+        ctx.restore()
       }
       if (live.edit && nw > 14) {
         ctx.fillStyle = selected ? PAL.text : 'oklch(0.2 0.03 252 / 0.35)'

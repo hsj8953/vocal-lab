@@ -1688,47 +1688,41 @@ export function foldCurveToNotes(curve: { t0: number; hop: number; midi: Float32
   const src = curve.midi
   const out = new Float32Array(src.length).fill(NaN)
   const sorted = [...notes].sort((a, b) => a.start - b.start)
-  const tAt = (i: number) => curve.t0 + i * curve.hop
-  // 구간 나누기: 소리 없음 또는 큰 도약에서 끊는다
-  let a = 0
-  while (a < src.length) {
-    if (!Number.isFinite(src[a])) {
-      a++
+  if (!sorted.length) return Float32Array.from(src)
+  // 순간마다 기준 음: 그 시간을 덮는 노트, 없으면 1.5초 안의 가장 가까운 노트 (이어진 구간은 앞의 기준을 이어 씀)
+  let j = 0
+  let lastRef = NaN
+  for (let i = 0; i < src.length; i++) {
+    const m = src[i]
+    if (!Number.isFinite(m)) {
+      lastRef = NaN
       continue
     }
-    let b = a
-    while (b + 1 < src.length && Number.isFinite(src[b + 1]) && Math.abs(src[b + 1] - src[b]) <= 1.5) b++
-    const seg: number[] = []
-    for (let i = a; i <= b; i++) seg.push(src[i])
-    seg.sort((x, y) => x - y)
-    const med = seg[seg.length >> 1]
-    const ta = tAt(a)
-    const tb = tAt(b)
-    // 겹치는 노트 (겹친 길이로 가중), 없으면 가장 가까운 노트 (3초 안)
-    let wsum = 0
-    let acc = 0
-    for (const n of sorted) {
-      if (n.start > tb) break
-      const ov = Math.min(tb, n.start + n.dur) - Math.max(ta, n.start)
-      if (ov > 0) {
-        wsum += ov
-        acc += ov * n.midi
+    const t = curve.t0 + i * curve.hop
+    while (j + 1 < sorted.length && sorted[j + 1].start <= t) j++
+    let ref = NaN
+    for (const k of [j, j + 1, j - 1]) {
+      const n = sorted[k]
+      if (n && t >= n.start - 0.02 && t <= n.start + n.dur + 0.02) {
+        ref = n.midi
+        break
       }
     }
-    let ref = wsum > 0 ? acc / wsum : NaN
+    if (!Number.isFinite(ref)) ref = lastRef
     if (!Number.isFinite(ref)) {
-      let best = 3
-      for (const n of sorted) {
-        const d = n.start > tb ? n.start - tb : ta > n.start + n.dur ? ta - (n.start + n.dur) : 0
+      let best = 1.5
+      for (const k of [j - 1, j, j + 1]) {
+        const n = sorted[k]
+        if (!n) continue
+        const d = t < n.start ? n.start - t : t > n.start + n.dur ? t - (n.start + n.dur) : 0
         if (d < best) {
           best = d
           ref = n.midi
         }
       }
     }
-    const k = Number.isFinite(ref) ? Math.round((ref - med) / 12) : 0
-    for (let i = a; i <= b; i++) out[i] = src[i] + 12 * k
-    a = b + 1
+    lastRef = ref
+    out[i] = Number.isFinite(ref) ? m + 12 * Math.round((ref - m) / 12) : m
   }
   return out
 }
@@ -1744,6 +1738,12 @@ export const realLevelInfo = (): { orig: number; mr: number } | null => real.lev
 export const audioContext = (): AudioContext => real.audioCtx()
 export const realHasGuideVocal = (): boolean => real.hasGuideVocal()
 export const realSeparatedWav = (kind: 'vocal' | 'inst'): Promise<Blob | null> => real.separatedWav(kind)
+/** 보컬 소리 크기 곡선 (10ms마다 dB) — 보컬 파일이나 AI 분리가 없으면 null */
+export const realVocalEnvelope = (): { t0: number; hop: number; db: Float32Array } | null => real.vocalEnvelope()
+/** AI 분리 설정 (그래픽카드 강제 시도) */
+export const realSetSepOptions = (o: { forceGpu?: boolean }) => real.setSepOptions(o)
+/** 마지막 AI 분리에 쓴 장치와 그래픽카드를 못 쓴 이유 */
+export const realSepDiag = (): { ep: string | null; reason: string; gpu: string } => ({ ...(real.sepDiag as { ep: string | null; reason: string; gpu: string }) })
 
 export async function realTrackBuffer(track: 'mr' | 'original' | 'vocal', semitones: number, onProg?: (p: number, eta: string) => void): Promise<AudioBuffer | null> {
   return real.getTrackBuffer(track, semitones, onProg)

@@ -8,6 +8,7 @@ import { buildReport } from '@/lib/report'
 import { saveHistory, songKey } from '@/lib/history'
 import * as library from '@/lib/library'
 import * as tabSession from '@/lib/tab-session'
+import { fillFromCurve } from '@/lib/note-check'
 import { FX_PRESETS, createVocalChain, layerGains, pitchCurve, renderKey, renderLayers, encodeWav, type FxParams, type RenderedLayers, type VocalChain } from '@/lib/vocal-fx'
 import type { LyricLine, Lyrics } from './studio-types'
 import type { Notation } from '@/lib/music'
@@ -992,6 +993,10 @@ export function createActions(env: ActionEnv) {
     nudgeMr,
     setAutofill: (v: boolean) => set((p) => ({ analysis: { ...p.analysis, autofill: v } })),
     setSeparate: (v: boolean) => set((p) => ({ analysis: { ...p.analysis, separate: v } })),
+    setForceGpu: (v: boolean) => {
+      engine.realSetSepOptions({ forceGpu: v })
+      set((p) => ({ analysis: { ...p.analysis, forceGpu: v } }))
+    },
     setPitchModel: (v: PitchModel) => set((p) => ({ analysis: { ...p.analysis, pitchModel: v } })),
     setCrepeModel: (v: CrepeModel) => set((p) => ({ analysis: { ...p.analysis, crepeModel: v } })),
     nudgeNoteFile: async (sec: number) => {
@@ -1090,6 +1095,38 @@ export function createActions(env: ActionEnv) {
 
     /* 편집 */
     setSelection: (ids: string[]) => set({ selection: ids }),
+    /** 노트 점검: 구간들을 원곡 보컬 음 선을 따라 노트로 채움 */
+    fillGaps: (gaps: { start: number; end: number }[]) => {
+      const st = sRef.current
+      const c = engine.realOrigCurve()
+      if (!c) return notify('원곡 보컬 음 선이 없어서 채울 수 없어요.')
+      const curve = { ...c, midi: engine.foldCurveToNotes(c, st.notes) }
+      let notes = st.notes
+      const added: Note[] = []
+      for (const g of gaps) {
+        const made = fillFromCurve(curve, g.start - 0.02, g.end + 0.02, notes).map((n) => ({ id: engine.uid(), start: n.start, dur: n.dur, midi: n.midi }))
+        added.push(...made)
+        notes = [...notes, ...made]
+      }
+      if (!added.length) return notify('채울 노트를 찾지 못했어요. 선이 너무 짧거나 이미 노트가 있어요.')
+      commitNotes(sorted(notes), added.map((n) => n.id))
+      notify(`노트 ${added.length}개를 만들었어요. 마음에 안 들면 되돌리기(Ctrl+Z)로 취소할 수 있어요.`)
+    },
+    deleteNotes: (ids: string[]) => {
+      const del = new Set(ids)
+      const st = sRef.current
+      const left = st.notes.filter((n) => !del.has(n.id))
+      if (left.length === st.notes.length) return
+      commitNotes(left, [])
+      notify(`노트 ${st.notes.length - left.length}개를 지웠어요. 되돌리기(Ctrl+Z)로 취소할 수 있어요.`)
+    },
+    setNotePitches: (changes: { id: string; midi: number }[]) => {
+      const m = new Map(changes.map((c) => [c.id, c.midi]))
+      commitNotes(
+        sRef.current.notes.map((n) => (m.has(n.id) ? { ...n, midi: m.get(n.id)! } : n)),
+        changes.map((c) => c.id),
+      )
+    },
     beginDrag: () => set((p) => pushHistory(p)),
     dragNotes: (notes: Note[]) => set({ notes }),
     endDrag: () => {
