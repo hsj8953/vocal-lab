@@ -12,6 +12,7 @@
 
 import { hzToMidi, midiToHz } from './music'
 import * as realMod from './real/song'
+import { loadSignalsmithStretch, type StretchNode } from './vendor/signalsmith-stretch'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const real = realMod as any
 
@@ -927,9 +928,9 @@ export interface Player {
   setTakeChain: (chain: { input: AudioNode; output: AudioNode } | null) => void
   /** 지금 재생 중인 반주 버퍼 (저장용) */
   getBuffer: () => AudioBuffer | null
-  /** 배속을 반영한 실제 재생 버퍼와 배속 (저장용) */
-  getPlayback: () => { buf: AudioBuffer | null; speed: number }
-  /** 배속 (음 높이는 그대로). 바꾸는 동안 onSpeedProgress로 진행률 */
+  /** 배속을 반영한 재생 버퍼(음 높이 보정)와 배속 (저장용 — 처음엔 계산에 시간이 걸림) */
+  getPlayback: () => Promise<{ buf: AudioBuffer | null; speed: number }>
+  /** 배속 (음 높이는 그대로, 재생하면서 바로 처리) */
   setSpeed: (speed: number) => Promise<void>
   getSpeed: () => number
   onSpeedProgress: (cb: (r: number | null) => void) => void
@@ -969,10 +970,30 @@ export function createPlayer(): Player {
   let guideGain: GainNode | null = null
   let guideVol = 0
   let layers: { id: string; t0: number; buf: AudioBuffer; g: GainNode; rate: number }[] = []
-  /* 배속: base*는 원래 버퍼, buffer/guideBuf는 배속에 맞춰 음 높이를 보정한 재생용 */
+  /* 배속: 버퍼를 speed배로 재생하고(음이 같이 변함) 실시간 피치 보정 노드로 음 높이만 되돌린다.
+     미리 계산하지 않으니 바로 바뀐다. 보정 노드는 1배가 아닐 때만 거친다 (지연 latency()초) */
   let speed = 1
   let baseBuffer: AudioBuffer | null = null
-  let baseGuide: AudioBuffer | null = null
+  let mainIn: GainNode | null = null
+  let stretch: StretchNode | null = null
+  let stretchReady: Promise<StretchNode | null> | null = null
+  let stretched = false
+  let stretchLatSec = 0.12
+  const stretchLat = () => (stretched && stretch ? stretchLatSec : 0)
+  const route = () => {
+    if (!mainIn || !gain) return
+    mainIn.disconnect()
+    stretch?.disconnect()
+    stretched = Math.abs(speed - 1) > 1e-3 && !!stretch
+    if (stretched && stretch) {
+      mainIn.connect(stretch)
+      stretch.connect(gain)
+      stretch.schedule({ active: true, semitones: -12 * Math.log2(speed) })
+    } else {
+      mainIn.connect(gain)
+      stretch?.schedule({ active: false })
+    }
+  }
   const compCache = new WeakMap<AudioBuffer, Map<number, AudioBuffer>>()
   let speedProg: ((r: number | null) => void) | null = null
   let speedTok = 0
@@ -1015,9 +1036,28 @@ export function createPlayer(): Player {
       lim.release.value = 0.1
       gain.connect(lim)
       lim.connect(ctx.destination)
+      mainIn = ctx.createGain()
+      mainIn.connect(gain)
       guideGain = ctx.createGain()
       guideGain.gain.value = guideVol * guideVol
-      guideGain.connect(gain)
+      guideGain.connect(mainIn)
+      const c0 = ctx
+      stretchReady = Promise.race([
+        loadSignalsmithStretch().then((SignalsmithStretch) => SignalsmithStretch(c0, { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] })),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('시간 초과')), 8000)),
+      ])
+        .then(async (n) => {
+          if (ctx !== c0) return null
+          const l = Number(await n.latency())
+          if (Number.isFinite(l) && l >= 0 && l < 1) stretchLatSec = l
+          stretch = n
+          route()
+          return n
+        })
+        .catch((e) => {
+          console.warn('배속 처리 노드를 못 만들었어요', e)
+          return null
+        })
       // 내 목소리는 반주 볼륨과 따로 조절한다
       takeGain = ctx.createGain()
       takeGain.gain.value = takeVol * takeVol
@@ -1048,7 +1088,7 @@ export function createPlayer(): Player {
       g.buffer = L.buf
       g.playbackRate.value = speed / L.rate
       g.connect(L.g)
-      g.start(when + Math.max(0, (L.t0 - at) / speed), Math.max(0, (at - L.t0) / L.rate))
+      g.start(when + stretchLat() + Math.max(0, (L.t0 - at) / speed), Math.max(0, (at - L.t0) / L.rate))
       takeSrcs.push(g)
     }
   }
@@ -1096,7 +1136,7 @@ export function createPlayer(): Player {
     const s = c.createBufferSource()
     s.buffer = buffer
     s.playbackRate.value = speed
-    s.connect(gain!)
+    s.connect(mainIn!)
     const my = ++token
     s.onended = () => {
       if (my !== token) return
@@ -1127,24 +1167,17 @@ export function createPlayer(): Player {
         offset = Math.min(pos, b.duration)
         if (was) startSrc()
       }
-      if (Math.abs(speed - 1) < 1e-3) return apply(buf)
-      // 배속 중이면 보정한 버퍼가 준비될 때까지 기존 것을 그대로 쓴다
-      const tok = ++speedTok
-      const sp = speed
-      void compensate(buf, sp)
-        .then((b) => {
-          if (tok === speedTok && sp === speed && baseBuffer === buf) apply(b)
-        })
-        .finally(() => tok === speedTok && speedProg?.(null))
-      if (!buffer) {
-        // 처음 불러온 거면 일단 원래 속도로라도 쓸 수 있게
-        speed = 1
-        apply(buf)
-        speed = sp
-      }
+      apply(buf)
     },
     async play() {
       if (playing) return
+      ensure()
+      // 배속 중인데 보정 노드가 아직 준비 전이면 잠깐 기다린다 (처음 한 번, 아주 짧게)
+      if (Math.abs(speed - 1) > 1e-3 && !stretch) {
+        await stretchReady
+        route()
+        if (playing) return
+      }
       startSrc()
     },
     pause() {
@@ -1162,7 +1195,7 @@ export function createPlayer(): Player {
       if (was) startSrc()
     },
     getTime() {
-      const lat = ctx ? ((ctx.outputLatency || 0) + (ctx.baseLatency || 0)) * speed : 0
+      const lat = ctx ? ((ctx.outputLatency || 0) + (ctx.baseLatency || 0) + stretchLat()) * speed : 0
       const t = playing ? rawPos() - lat : offset
       return Math.max(0, buffer ? Math.min(t, buffer.duration) : t)
     },
@@ -1175,17 +1208,9 @@ export function createPlayer(): Player {
       endedCb = cb
     },
     loadGuide(buf) {
-      baseGuide = buf
-      const apply = (b: AudioBuffer | null) => {
-        guideBuf = b
-        if (playing && ctx) startGuide(ctx.currentTime + 0.02, rawPos() + 0.02)
-        else if (!b) stopGuide()
-      }
-      if (!buf || Math.abs(speed - 1) < 1e-3) return apply(buf)
-      const sp = speed
-      void compensate(buf, sp).then((b) => {
-        if (sp === speed && baseGuide === buf) apply(b)
-      })
+      guideBuf = buf
+      if (playing && ctx) startGuide(ctx.currentTime + 0.02, rawPos() + 0.02 * speed)
+      else if (!buf) stopGuide()
     },
     setGuideVolume(v) {
       guideVol = v
@@ -1215,32 +1240,50 @@ export function createPlayer(): Player {
       wireChain()
     },
     getBuffer: () => baseBuffer ?? buffer,
-    getPlayback: () => ({ buf: buffer, speed }),
+    async getPlayback() {
+      const sp = speed
+      const b = baseBuffer ?? buffer
+      return { buf: b ? await compensate(b, sp) : null, speed: sp }
+    },
     getSpeed: () => speed,
     onSpeedProgress(cb) {
       speedProg = cb
     },
     async setSpeed(s) {
       s = Math.max(0.25, Math.min(2, s))
-      if (Math.abs(s - speed) < 1e-3 && (!baseBuffer || buffer)) return
+      if (Math.abs(s - speed) < 1e-3) return
+      const c = ensure()
       const tok = ++speedTok
-      speedProg?.(0)
-      try {
-        const nb = baseBuffer ? await compensate(baseBuffer, s) : null
-        const ng = baseGuide ? await compensate(baseGuide, s) : null
-        if (tok !== speedTok) return
-        const was = playing
-        const pos = rawPos()
-        stopSrc()
-        playing = false
+      if (Math.abs(s - 1) > 1e-3 && !stretch) await stretchReady
+      if (tok !== speedTok) return
+      const wasOn = stretched
+      const on = Math.abs(s - 1) > 1e-3 && !!stretch
+      if (!playing) {
         speed = s
-        if (nb) buffer = nb
-        guideBuf = ng
-        offset = buffer ? Math.min(pos, buffer.duration) : pos
-        if (was) startSrc()
-      } finally {
-        if (tok === speedTok) speedProg?.(null)
+        route()
+        return
       }
+      if (wasOn && on) {
+        // 재생 중 배속끼리 바꾸기: 끊지 않고 그 자리에서 속도·보정만 바꾼다
+        const pos = rawPos()
+        const now = c.currentTime
+        offset = pos
+        startedAt = now
+        speed = s
+        src?.playbackRate.setValueAtTime(s, now)
+        guideSrc?.playbackRate.setValueAtTime(s, now)
+        stretch!.schedule({ active: true, semitones: -12 * Math.log2(s) })
+        startTake(now, pos)
+        return
+      }
+      // 1배 ↔ 배속: 보정 노드를 넣고 빼야 해서 그 자리에서 다시 시작
+      const pos = rawPos()
+      stopSrc()
+      playing = false
+      speed = s
+      route()
+      offset = buffer ? Math.min(pos, buffer.duration) : pos
+      startSrc()
     },
     setTakeVolume(v) {
       takeVol = v
@@ -1253,6 +1296,8 @@ export function createPlayer(): Player {
     dispose() {
       stopSrc()
       gain?.disconnect()
+      stretch?.disconnect()
+      stretch = null
       ctx = null
     },
   }

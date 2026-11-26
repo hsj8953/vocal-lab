@@ -74,7 +74,7 @@ export function SpeedControl() {
               ? `녹음 다시 보기는 녹음한 배속(${s.takeSpeed}x)으로만 들을 수 있어요.`
               : s.practice.phase !== 'idle'
                 ? '연습 중에는 바꿀 수 없어요. 연습을 끝낸 뒤 바꿔 주세요.'
-                : '음 높이(키)는 그대로 두고 빠르기만 바꿔요. 처음 바꿀 때 몇 초 걸려요. 느리게 연습하고, 결과 화면에서는 연습한 배속 그대로 들려줘요.'}
+                : '음 높이(키)는 그대로 두고 빠르기만 바꿔요. 누르면 바로 바뀌고 재생 중에도 바꿀 수 있어요. 느리게 연습하고, 결과 화면에서는 연습한 배속 그대로 들려줘요.'}
           </p>
           {busy ? (
             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-voice" role="status">

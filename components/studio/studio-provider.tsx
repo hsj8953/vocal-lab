@@ -383,6 +383,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       get song() {
         return engine.realSong()
       },
+      get time() {
+        return playerRef.current?.getTime() ?? 0
+      },
+      get player() {
+        return playerRef.current
+      },
     }
   }, [])
 

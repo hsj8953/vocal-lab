@@ -430,7 +430,7 @@ export function createActions(env: ActionEnv) {
       const a1 = span.t1 + 2
       const sr = 44100
       // 저장은 연습한 배속 그대로 (지금 재생 배속)
-      const pb = p.getPlayback()
+      const pb = await p.getPlayback()
       const sp = pb.speed
       const oc = new OfflineAudioContext(2, Math.ceil(((a1 - a0) / sp) * sr), sr)
       const lim = oc.createDynamicsCompressor()
