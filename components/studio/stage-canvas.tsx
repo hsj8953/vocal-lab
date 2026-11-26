@@ -280,6 +280,39 @@ export function StageCanvas() {
       ctx.fillRect(hover.current.x - 0.5, TOP - 8, 1, h - TOP - BOTTOM + 8)
     }
 
+    /* 원곡 보컬 음 선 — 노트가 빠진 곳을 찾고 그 높이에 노트를 놓을 수 있게 */
+    if (live.origLine && live.origCurve) {
+      const oc = live.origCurve
+      const i0 = Math.max(0, Math.floor((tL - 0.2 - oc.t0) / oc.hop))
+      const i1 = Math.min(oc.midi.length - 1, Math.ceil((tR + 0.2 - oc.t0) / oc.hop))
+      ctx.save()
+      ctx.lineWidth = 2
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.strokeStyle = 'oklch(0.97 0.01 90 / 0.5)'
+      ctx.setLineDash([])
+      ctx.beginPath()
+      let open = false
+      let pm = NaN
+      for (let i = i0; i <= i1; i++) {
+        const m = oc.midi[i]
+        if (!Number.isFinite(m)) {
+          open = false
+          pm = NaN
+          continue
+        }
+        const px = x(oc.t0 + i * oc.hop)
+        const py = y(m + live.shift)
+        // 음이 크게 뛰면 잇지 않는다
+        if (open && Math.abs(m - pm) <= 1.5) ctx.lineTo(px, py)
+        else ctx.moveTo(px, py)
+        open = true
+        pm = m
+      }
+      ctx.stroke()
+      ctx.restore()
+    }
+
     /* 내 목소리 궤적 — 녹음 다시 보기 중이면 녹음 때 그린 선을 재생 위치까지 */
     const replay = live.replay && !!live.replayTrace
     const tr = replay ? live.replayTrace! : live.trace

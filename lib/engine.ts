@@ -1595,6 +1595,11 @@ export const realLoadLyrics = (): Promise<any> => real.loadLyrics()
 export const realSong = () => real.SONG
 /** 원곡 보컬의 음 높이(원곡 키, MIDI) — 없으면 NaN */
 export const realOrigPitchAt = (t: number): number => real.origPitchAt(t)
+/** 원곡 보컬 음 높이 곡선 전체 (원곡 키 MIDI, 소리 없는 곳은 NaN) — 분석 전이거나 원곡이 없으면 null */
+export const realOrigCurve = (): { t0: number; hop: number; midi: Float32Array } | null => {
+  const m = (real.SONG as { lastMel?: { hop: number; midi: Float32Array } | null }).lastMel
+  return m ? { t0: real.MEL_T0, hop: m.hop, midi: m.midi } : null
+}
 export const realLevelInfo = (): { orig: number; mr: number } | null => real.levelInfo()
 
 /** 재생에 쓰는 오디오 컨텍스트 (하나를 같이 쓴다) */

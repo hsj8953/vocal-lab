@@ -91,6 +91,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   L.selection = new Set(s.selection)
   L.notation = s.notation
   L.edit = s.view === 'studio' && s.railTab === 'edit'
+  L.origCurve = s.project.real && s.analysis.status === 'done' ? engine.realOrigCurve() : null
+  L.origLine = s.showOrigLine && (L.edit || s.origLineAlways)
   L.tool = s.tool
   L.micOn = s.mic.on
 
@@ -222,6 +224,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           guideVolume: v.guideVolume ?? p.guideVolume,
           analysis: { ...p.analysis, ...(v.analysis ?? {}) },
           fx: v.fx ? { ...p.fx, ...v.fx } : p.fx,
+          showOrigLine: v.showOrigLine ?? p.showOrigLine,
+          origLineAlways: v.origLineAlways ?? p.origLineAlways,
           fxPreset: v.fxPreset ?? p.fxPreset,
         }))
     } catch {
@@ -242,12 +246,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           analysis: { sensitivity: s.analysis.sensitivity, splitSyllables: s.analysis.splitSyllables, autofill: s.analysis.autofill, pitchModel: s.analysis.pitchModel, crepeModel: s.analysis.crepeModel, separate: s.analysis.separate },
           fx: s.fx,
           fxPreset: s.fxPreset,
+          showOrigLine: s.showOrigLine,
+          origLineAlways: s.origLineAlways,
         }),
       )
     } catch {
       /* 무시 */
     }
-  }, [s.guideVolume, s.userRange, s.syncMs, s.micLatencyMs, s.notation, s.volume, s.analysis.sensitivity, s.analysis.splitSyllables, s.analysis.autofill, s.analysis.pitchModel, s.analysis.crepeModel, s.analysis.separate, s.fx, s.fxPreset])
+  }, [s.guideVolume, s.userRange, s.syncMs, s.micLatencyMs, s.notation, s.volume, s.analysis.sensitivity, s.analysis.splitSyllables, s.analysis.autofill, s.analysis.pitchModel, s.analysis.crepeModel, s.analysis.separate, s.fx, s.fxPreset, s.showOrigLine, s.origLineAlways])
 
   /* 가이드 보컬: MR 재생 중이고 볼륨이 0보다 클 때만 만든다 */
   const guideOn = isReal && s.source === 'mr' && s.guideAvailable && s.guideVolume > 0

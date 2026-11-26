@@ -3,6 +3,8 @@
 import { ArrowDown, ArrowUp, Download, Merge, MousePointer2, Plus, Redo2, Scissors, Trash2, Undo2 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
+import { realOrigCurve } from '@/lib/engine'
 import { useStudio } from './studio-provider'
 import { Kbd, Section, Seg } from './ui-bits'
 
@@ -30,6 +32,8 @@ export function RailEdit() {
           {s.tool === 'cut' && '자를 노트 위를 클릭하세요. 클릭한 지점에서 둘로 나뉘어요.'}
         </p>
       </Section>
+
+      <OrigLineSection />
 
       <Section title="선택한 노트" hint={n ? `${n}개 선택됨` : '선택 없음'}>
         <div className="grid grid-cols-2 gap-2">
@@ -118,5 +122,39 @@ function LyricInput() {
         가사 저장
       </Button>
     </form>
+  )
+}
+
+/** 원곡 보컬 음 선 켜고 끄기 */
+function OrigLineSection() {
+  const { s, a } = useStudio()
+  const available = s.project.real && s.analysis.status === 'done' && !!realOrigCurve()
+  const fromVocal = !!s.inputs.vocal || !!s.analysis.info?.separated
+  return (
+    <Section title="원곡 보컬 음 선">
+      <div className="flex items-center justify-between gap-3">
+        <label htmlFor="origline" className="text-sm">
+          노트 뒤에 원곡 가수가 부른 음 그리기
+          <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span className="inline-block h-0.5 w-5 rounded bg-[oklch(0.97_0.01_90/0.6)]" /> 흰 선
+          </span>
+        </label>
+        <Switch id="origline" checked={s.showOrigLine} disabled={!available} onCheckedChange={(v) => a.setShowOrigLine(!!v)} />
+      </div>
+      {available ? (
+        <>
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+            선만 있고 노트가 없는 곳이 빠진 노트예요. <b className="text-foreground">추가</b> 도구로 선이 지나가는 높이에 그리면 돼요. 반대로 선이 없는데 노트만 있으면 쓸모없는 노트일 가능성이 커요.
+          </p>
+          {!fromVocal ? <p className="mt-1.5 text-[11px] text-caution">보컬 파일이나 AI 분리 없이 원곡에서 잰 선이라 반주 소리가 섞일 수 있어요.</p> : null}
+          <label className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground" htmlFor="origalways">
+            연습할 때도 보기
+            <Switch id="origalways" checked={s.origLineAlways} disabled={!s.showOrigLine} onCheckedChange={(v) => a.setOrigLineAlways(!!v)} />
+          </label>
+        </>
+      ) : (
+        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">원곡 파일을 넣고 분석한 곡에서만 볼 수 있어요. (데모 곡, MR과 노트 파일만 넣은 곡은 원곡 보컬 음이 없어요)</p>
+      )}
+    </Section>
   )
 }

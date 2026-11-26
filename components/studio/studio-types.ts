@@ -150,6 +150,10 @@ export interface StudioState {
   libraryOpening: string | null
   /** 스튜디오에서 녹음 다시 보기 중 (내 목소리 + 그때 그린 선) */
   replay: boolean
+  /** 원곡 보컬 음 선 보기 (노트 편집에서) */
+  showOrigLine: boolean
+  /** 연습할 때도 원곡 보컬 음 선 보기 */
+  origLineAlways: boolean
 }
 
 export interface PracticeState {
@@ -183,6 +187,10 @@ export interface Live {
   cmp: Compare | null
   targetNoteId: string | null
   trace: TracePoint[]
+  /** 원곡 보컬 음 높이 곡선 (원곡 키) */
+  origCurve: { t0: number; hop: number; midi: Float32Array } | null
+  /** 원곡 보컬 음 선을 그릴지 */
+  origLine: boolean
   /** 마지막 연습에서 그린 내 음 선 전체 (녹음 다시 보기용) */
   replayTrace: TracePoint[] | null
   /** 녹음 다시 보기 중 */
@@ -266,6 +274,8 @@ export function createInitialState(): StudioState {
     libraryRev: 0,
     libraryOpening: null,
     replay: false,
+    showOrigLine: true,
+    origLineAlways: false,
   }
 }
 
@@ -288,6 +298,8 @@ export function createLive(): Live {
     targetNoteId: null,
     trace: [],
     replayTrace: null,
+    origCurve: null,
+    origLine: false,
     replay: false,
     noteScore: new Map(),
     windowSec: 9,

@@ -1017,6 +1017,8 @@ export function createActions(env: ActionEnv) {
     setTakeVolume: (v: number) => set({ takeVolume: clamp(v, 0, 1) }),
     startReplay,
     stopReplay,
+    setShowOrigLine: (showOrigLine: boolean) => set({ showOrigLine }),
+    setOrigLineAlways: (origLineAlways: boolean) => set({ origLineAlways }),
     setFx,
     setFxPreset,
     setFxCompare,
