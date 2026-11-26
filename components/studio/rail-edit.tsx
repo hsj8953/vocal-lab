@@ -246,7 +246,7 @@ function NoteCheckSection() {
                 {fmtTime(it.start, 1)}
               </button>
               <span className={`shrink-0 font-medium ${KIND[it.kind].color}`}>{KIND[it.kind].label}</span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">
+              <span className="min-w-0 flex-1 break-words text-muted-foreground">
                 {it.kind === 'missing' ? `${(it.end - it.start).toFixed(1)}초 · ${nm(it.suggest!)} 근처` : it.kind === 'pitch' ? `${nm(it.midi!)} → ${nm(it.suggest!)}` : nm(it.midi!)}
               </span>
               {it.kind === 'missing' ? (

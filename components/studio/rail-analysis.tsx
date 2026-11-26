@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { fmtTime, noteName } from '@/lib/music'
+import { SepReason } from './sep-reason'
 import { useStudio } from './studio-provider'
 import { LrclibSearch } from './lrclib-search'
 import { LyricsEditor } from './lyrics-editor'
@@ -436,26 +437,9 @@ function SeparationSection() {
 
 /** 분리에 그래픽카드를 썼는지, 못 썼으면 왜인지 + 강제 시도 */
 function GpuInfo() {
-  const { s, a } = useStudio()
-  const d = realSepDiag()
-  const ran = d.ep !== null
-  const cpu = ran && d.ep !== 'webgpu'
   return (
-    <div className="mt-3 rounded-lg border border-border p-2.5 text-[11px] leading-relaxed">
-      <p className="font-medium text-foreground">
-        분리 장치:{' '}
-        {!ran ? <span className="text-muted-foreground">이번에 연 뒤로 아직 분리하지 않았어요</span> : d.ep === 'webgpu' ? <span className="text-voice">그래픽카드 (빠름)</span> : <span className="text-caution">CPU (느림)</span>}
-      </p>
-      {d.gpu ? <p className="text-muted-foreground">그래픽카드: {d.gpu}</p> : null}
-      {cpu && d.reason ? <p className="mt-1 text-caution">이유: {d.reason}</p> : null}
-      {ran && d.ep === 'webgpu' && d.reason ? <p className="mt-1 text-muted-foreground">{d.reason}</p> : null}
-      <label htmlFor="forcegpu" className="mt-2 flex items-center justify-between gap-3 text-muted-foreground">
-        <span>
-          그래픽카드로 강제 시도
-          <span className="block text-[10px]">소프트웨어 그래픽으로 판단돼 CPU를 쓸 때 켜 보세요. 오류가 나면 자동으로 CPU로 돌아가요.</span>
-        </span>
-        <Switch id="forcegpu" checked={s.analysis.forceGpu} onCheckedChange={(v) => a.setForceGpu(!!v)} />
-      </label>
+    <div className="mt-3">
+      <SepReason />
     </div>
   )
 }

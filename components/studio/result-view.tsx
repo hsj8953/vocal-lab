@@ -509,7 +509,7 @@ function PhraseSection({ phrases, prev }: { phrases: PhraseScore[]; prev?: Histo
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-background/40 p-3">
           <span className={cn('font-mono text-2xl font-bold tabular', scoreColor(cur.score))}>{cur.score}</span>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{label(cur) || '(가사 없음)'}</p>
+            <p className="text-sm font-medium break-words">{label(cur) || '(가사 없음)'}</p>
             <p className="font-mono text-[11px] text-muted-foreground tabular">
               {fmtTime(cur.start, 1)}–{fmtTime(cur.end, 1)} · 노트 {cur.notes}개
               {(() => {
@@ -533,7 +533,7 @@ function PhraseSection({ phrases, prev }: { phrases: PhraseScore[]; prev?: Histo
           <li key={p.start} className="flex items-center gap-3 py-2 text-sm">
             <span className={cn('w-9 font-mono font-bold tabular', scoreColor(p.score))}>{p.score}</span>
             <span className="font-mono text-xs text-muted-foreground tabular">{fmtTime(p.start)}</span>
-            <button type="button" className="min-w-0 flex-1 truncate text-left hover:underline" onClick={() => setSel(i)}>
+            <button type="button" className="line-clamp-2 min-w-0 flex-1 text-left break-words hover:underline" onClick={() => setSel(i)} title={label(p) || undefined}>
               {label(p) || '(가사 없음)'}
             </button>
             <Button size="xs" variant="secondary" onClick={() => a.listenFrom(p.start)}>
@@ -670,7 +670,7 @@ function NoteTable({ report }: { report: Report }) {
                   </button>
                 </td>
                 <td className="py-1.5 pr-2 font-mono text-xs font-semibold">{noteName(r.midi, s.notation)}</td>
-                <td className="max-w-[8rem] truncate py-1.5 pr-2 text-xs text-muted-foreground">{r.lyric ?? ''}</td>
+                <td className="max-w-[12rem] py-1.5 pr-2 text-xs break-words text-muted-foreground">{r.lyric ?? ''}</td>
                 <td className={cn('py-1.5 pr-2 text-right font-mono text-xs font-semibold tabular', r.acc === null ? 'text-muted-foreground' : scoreColor(r.acc))}>{r.acc ?? '—'}</td>
                 <td className="py-1.5 pr-2 text-right font-mono text-xs tabular">{r.cents === null ? '—' : `${r.cents > 0 ? '+' : ''}${r.cents}`}</td>
                 <td className="py-1.5">

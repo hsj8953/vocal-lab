@@ -82,11 +82,11 @@ export function LrclibSearch() {
                     )}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="truncate font-semibold">{r.trackName}</span>
+                      <span className="line-clamp-2 font-semibold break-words">{r.trackName}</span>
                       {chosen ? <Check className="size-3.5 shrink-0 text-voice" /> : null}
                     </div>
                     <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                      <span className="truncate">
+                      <span className="line-clamp-2 break-words">
                         {r.artistName}
                         {r.albumName ? ` · ${r.albumName}` : ''}
                       </span>

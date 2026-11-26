@@ -7,6 +7,8 @@ import { listSongs, storageUsage, type LibSong } from '@/lib/library'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
+import { realSepDiag } from '@/lib/engine'
+import { SepReason } from './sep-reason'
 import { useStudio } from './studio-provider'
 import type { InputKind } from './studio-types'
 
@@ -21,6 +23,14 @@ const SLOTS: { kind: InputKind; title: string; desc: string; accept: string; req
 function fmtSize(n: number) {
   if (n >= 1e9) return `${(n / 1e9).toFixed(1)}GB`
   return n > 1_000_000 ? `${(n / 1_000_000).toFixed(1)}MB` : `${Math.round(n / 1000)}KB`
+}
+
+/** 지금 분리가 CPU로 돌고 있으면 이유를 바로 보여준다 */
+function RunningSepReason() {
+  const { s } = useStudio()
+  const d = realSepDiag()
+  if (s.analysis.status !== 'running' || !d.ep || d.ep === 'webgpu' || !/분리/.test(s.analysis.stage)) return null
+  return <SepReason running />
 }
 
 export function ImportView() {
@@ -79,6 +89,7 @@ export function ImportView() {
           {running ? <Loader2 className="animate-spin" /> : null}
           {running ? `${s.analysis.stage}… ${Math.round(s.analysis.ratio * 100)}%` : s.inputs.noteFile?.file ? '노트 불러와서 시작' : '멜로디 분석하고 시작'}
         </Button>
+        <RunningSepReason />
         {!canStart ? <p className="text-center text-xs text-muted-foreground">원곡 파일을 넣으면 시작할 수 있어요.</p> : null}
         <p className="text-center text-[11px] text-muted-foreground">분석이 끝나면 내 곡 목록에 자동으로 저장돼요.</p>
       </div>
@@ -175,7 +186,7 @@ function SongCard({ song }: { song: LibSong }) {
       ) : (
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[15px] font-semibold" title={song.title}>
+            <p className="line-clamp-2 text-[15px] font-semibold break-words" title={song.title}>
               {song.title}
             </p>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
@@ -272,7 +283,16 @@ function Slot({ slot }: { slot: (typeof SLOTS)[number] }) {
           {slot.title}
           <span className={cn('rounded px-1.5 py-px text-[10px] font-medium', slot.required ? 'bg-voice/20 text-voice' : 'bg-muted text-muted-foreground')}>{slot.required ? '필수' : '선택'}</span>
         </div>
-        <p className="truncate text-xs text-muted-foreground">{filled ? `${cur!.name} · ${fmtSize(cur!.size)}` : slot.desc}</p>
+        {filled ? (
+          <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+            <span className="line-clamp-2 min-w-0 flex-1 [overflow-wrap:anywhere]" title={cur!.name}>
+              {cur!.name}
+            </span>
+            <span className="shrink-0 font-mono tabular">{fmtSize(cur!.size)}</span>
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">{slot.desc}</p>
+        )}
       </div>
       <input ref={input} type="file" accept={slot.accept} className="sr-only" aria-label={`${slot.title} 파일 선택`} onChange={(e) => e.target.files?.[0] && a.setInput(slot.kind, e.target.files[0])} />
       {filled ? (

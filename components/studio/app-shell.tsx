@@ -71,7 +71,7 @@ function Header() {
         })}
       </nav>
       <div className="ml-auto flex items-center gap-2">
-        <p className="hidden max-w-[220px] truncate text-xs text-muted-foreground md:block">
+        <p className="hidden max-w-[260px] truncate text-xs text-muted-foreground md:block" title={`${s.project.title} · ${s.project.artist}`}>
           <span className="font-medium text-foreground">{s.project.title}</span> · {s.project.artist}
         </p>
         <SyncControl />
@@ -283,7 +283,7 @@ function LoopBanner() {
         <span className="font-mono text-xs text-muted-foreground tabular">
           {fmt(s.loop.a)}–{fmt(s.loop.b)}
         </span>
-        {s.loop.label ? <span className="max-w-[12rem] truncate text-xs text-muted-foreground">‘{s.loop.label}’</span> : null}
+        {s.loop.label ? <span className="max-w-[12rem] truncate text-xs text-muted-foreground" title={s.loop.label}>‘{s.loop.label}’</span> : null}
         <Button size="xs" variant="secondary" onClick={a.clearLoop}>
           반복 끄기
         </Button>
