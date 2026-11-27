@@ -1,7 +1,26 @@
 'use client'
 
-import { ArrowLeft, ChevronDown, Download, Eye, Headphones, Loader2, SlidersHorizontal, Wand2, Lightbulb, Mic, Pause, Play, Repeat, RotateCcw, Sparkles, Target, TrendingDown, TrendingUp } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import {
+  ArrowLeft,
+  ChevronDown,
+  Download,
+  Eye,
+  Headphones,
+  Loader2,
+  SlidersHorizontal,
+  Wand2,
+  Lightbulb,
+  Mic,
+  Pause,
+  Play,
+  Repeat,
+  RotateCcw,
+  Sparkles,
+  Target,
+  TrendingDown,
+  TrendingUp,
+} from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as engine from '@/lib/engine'
 import { loadHistory, phraseDelta, songKey, type HistoryEntry } from '@/lib/history'
 import { buildReport, type Coaching, type Metric, type MetricGroup, type PhraseScore, type RangeCell, type Report, type Status } from '@/lib/report'
@@ -102,7 +121,10 @@ export function ResultView() {
         </div>
       ) : (
         <div className="rise-in mt-6 grid grid-cols-1 items-start gap-5 lg:grid-cols-[1.25fr_1fr]">
-          <SummaryCard report={report} history={history} prev={prev} isSaved={isSaved} />
+          <div className="flex flex-col gap-5">
+            <SummaryCard report={report} history={history} prev={prev} isSaved={isSaved} />
+            <NextStepsCard report={report} history={history} isSaved={isSaved} />
+          </div>
           <TakeCard />
           <CoachingSection report={report} />
           <MetricsSection groups={report.groups} prev={prev} />
@@ -178,31 +200,194 @@ function SummaryCard({ report, history, prev, isSaved }: { report: Report; histo
   )
 }
 
+const CHART_LINES = [
+  { k: 'score', label: '종합', cls: 'stroke-voice', w: 2.5 },
+  { k: 'pitch', label: '음정', cls: 'stroke-caution', w: 1.5 },
+  { k: 'coverage', label: '부른 비율', cls: 'stroke-foreground/60', w: 1.5 },
+  { k: 'timing', label: '박자', cls: 'stroke-miss/70', w: 1.5 },
+] as const
+
 function HistoryChart({ history }: { history: HistoryEntry[] }) {
+  const [hide, setHide] = useState<Set<string>>(new Set())
   const h = history.slice(-12)
-  const W = 320
-  const H = 64
-  const x = (i: number) => (h.length === 1 ? W / 2 : 8 + (i * (W - 16)) / (h.length - 1))
-  const y = (v: number) => H - 6 - (Math.max(0, Math.min(100, v)) / 100) * (H - 14)
+  // 그래프 폭을 칸 폭에 맞춘다 (글자·점이 늘어나지 않게 viewBox를 실제 픽셀로)
+  const [W, setW] = useState(360)
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setW(Math.max(200, Math.round(el.clientWidth))))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const H = 128
+  const L = 22
+  const x = (i: number) => (h.length === 1 ? (W + L) / 2 : L + 6 + (i * (W - L - 14)) / (h.length - 1))
+  const y = (v: number) => H - 14 - (Math.max(0, Math.min(100, v)) / 100) * (H - 22)
+  const val = (e: HistoryEntry, k: string) => (k === 'score' ? e.score : e.nums[k])
   const best = Math.max(...history.map((e) => e.score))
+  const first = h[0]
+  const last = h[h.length - 1]
   return (
     <div className="mt-4 border-t border-border pt-3">
-      <div className="flex items-baseline justify-between text-xs">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
         <span className="font-semibold">점수 변화</span>
         <span className="text-muted-foreground">
           {history.length}번 연습 · 최고 <b className="font-mono text-foreground">{best}</b>점
+          {h.length >= 2 ? ` · 최근 ${h.length}번 동안 ${last.score - first.score >= 0 ? '+' : ''}${last.score - first.score}점` : ''}
         </span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="mt-2 h-16 w-full" role="img" aria-label={`최근 점수: ${h.map((e) => e.score).join(', ')}`}>
-        <line x1="0" x2={W} y1={y(80)} y2={y(80)} className="stroke-voice/25" strokeDasharray="3 3" />
-        <polyline points={h.map((e, i) => `${x(i)},${y(e.score)}`).join(' ')} fill="none" className="stroke-voice" strokeWidth="2" strokeLinejoin="round" />
-        {h.map((e, i) => (
-          <circle key={e.at} cx={x(i)} cy={y(e.score)} r={i === h.length - 1 ? 4 : 2.5} className={i === h.length - 1 ? 'fill-voice' : 'fill-card stroke-voice'} strokeWidth="1.5">
-            <title>{`${new Date(e.at).toLocaleDateString()} ${e.score}점 (키 ${e.shift > 0 ? '+' : ''}${e.shift})`}</title>
-          </circle>
-        ))}
-      </svg>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {CHART_LINES.map((l) => {
+          const on = !hide.has(l.k)
+          return (
+            <button
+              key={l.k}
+              type="button"
+              aria-pressed={on}
+              onClick={() =>
+                setHide((p) => {
+                  const n = new Set(p)
+                  if (n.has(l.k)) n.delete(l.k)
+                  else n.add(l.k)
+                  return n
+                })
+              }
+              className={cn('flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]', on ? 'border-border text-foreground' : 'border-transparent text-muted-foreground/50 line-through')}
+            >
+              <svg width="12" height="4" aria-hidden>
+                <line x1="0" x2="12" y1="2" y2="2" className={l.cls} strokeWidth={l.w} />
+              </svg>
+              {l.label}
+            </button>
+          )
+        })}
+      </div>
+      <div ref={box} className="mt-2 w-full">
+        <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block" role="img" aria-label={`최근 점수: ${h.map((e) => e.score).join(', ')}`}>
+          {[0, 50, 100].map((g) => (
+            <g key={g}>
+              <line x1={L} x2={W} y1={y(g)} y2={y(g)} className="stroke-border" strokeWidth="1" />
+              <text x={L - 4} y={y(g) + 3} textAnchor="end" className="fill-muted-foreground text-[9px]">
+                {g}
+              </text>
+            </g>
+          ))}
+          <line x1={L} x2={W} y1={y(80)} y2={y(80)} className="stroke-voice/30" strokeDasharray="3 3" />
+          {CHART_LINES.filter((l) => !hide.has(l.k)).map((l) => {
+            const pts = h.map((e, i) => [x(i), val(e, l.k)] as const).filter(([, v]) => Number.isFinite(v))
+            if (!pts.length) return null
+            return (
+              <g key={l.k}>
+                <polyline points={pts.map(([px, v]) => `${px},${y(v)}`).join(' ')} fill="none" className={l.cls} strokeWidth={l.w} strokeLinejoin="round" opacity={l.k === 'score' ? 1 : 0.75} />
+                {l.k === 'score'
+                  ? h.map((e, i) => (
+                      <circle key={e.at} cx={x(i)} cy={y(e.score)} r={i === h.length - 1 ? 4 : 2.5} className={i === h.length - 1 ? 'fill-voice' : 'fill-card stroke-voice'} strokeWidth="1.5">
+                        <title>{`${new Date(e.at).toLocaleDateString()} · 종합 ${e.score} · 음정 ${e.nums.pitch ?? '-'} · 부른 비율 ${e.nums.coverage ?? '-'} · 박자 ${e.nums.timing ?? '-'} (키 ${e.shift > 0 ? '+' : ''}${e.shift})`}</title>
+                      </circle>
+                    ))
+                  : null}
+              </g>
+            )
+          })}
+          {h.length >= 2 ? (
+            <>
+              <text x={x(0)} y={H - 2} textAnchor="start" className="fill-muted-foreground text-[9px]">
+                {new Date(first.at).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
+              </text>
+              <text x={x(h.length - 1)} y={H - 2} textAnchor="end" className="fill-muted-foreground text-[9px]">
+                이번
+              </text>
+            </>
+          ) : null}
+        </svg>
+      </div>
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* 다음 연습 할 일                                                        */
+/* ------------------------------------------------------------------ */
+
+function NextStepsCard({ report, history, isSaved }: { report: Report; history: HistoryEntry[]; isSaved: boolean }) {
+  const { s, a } = useStudio()
+  const { adv, rk } = useRangeAdvice(report, history, isSaved)
+  const top = report.coaching[0]
+  const weak = [...report.phrases]
+    .filter((p) => p.score < 80 && p.notes >= 2)
+    .sort((x, y) => x.score - y.score)
+    .slice(0, 2)
+    .sort((x, y) => x.start - y.start)
+  const label = (p: PhraseScore) => {
+    if (p.lyric) return p.lyric
+    const ly = s.lyrics
+    if (!ly) return ''
+    const line = [...ly.lines].reverse().find((l) => l.t + ly.offset <= p.start + 0.3)
+    return line ? line.reading || line.text : ''
+  }
+  const keyChange = rk && adv.enough && rk.key !== s.keyShift
+  if (!top && !weak.length && !keyChange) return null
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5">
+      <h2 className="flex items-center gap-1.5 text-sm font-semibold">
+        <Target className="size-4 text-voice" /> 다음 연습 할 일
+      </h2>
+      <ol className="mt-3 space-y-3">
+        {top ? (
+          <li className="flex gap-3">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-voice/15 font-mono text-[11px] font-bold text-voice">1</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">{top.title}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{top.evidence}</p>
+              {top.how[0] ? <p className="mt-1 text-xs leading-relaxed">→ {top.how[0]}</p> : null}
+              <button type="button" className="mt-1 text-[11px] text-voice hover:underline" onClick={() => document.getElementById('coaching')?.scrollIntoView({ behavior: 'smooth' })}>
+                코칭 자세히 보기
+              </button>
+            </div>
+          </li>
+        ) : null}
+        {weak.length ? (
+          <li className="flex gap-3">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-voice/15 font-mono text-[11px] font-bold text-voice">{top ? 2 : 1}</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">이 소절을 반복 연습해 보세요</p>
+              <ul className="mt-1.5 space-y-1.5">
+                {weak.map((p) => (
+                  <li key={p.start} className="flex items-center gap-2 text-xs">
+                    <span className={cn('w-7 shrink-0 font-mono font-semibold tabular', scoreColor(p.score))}>{p.score}</span>
+                    <span className="shrink-0 font-mono text-muted-foreground tabular">{fmtTime(p.start)}</span>
+                    <span className="min-w-0 flex-1 truncate" title={label(p)}>
+                      {label(p) || '(가사 없음)'}
+                    </span>
+                    <Button size="xs" variant="secondary" onClick={() => a.listenFrom(p.start)}>
+                      듣기
+                    </Button>
+                    <Button size="xs" onClick={() => a.setLoop(p.start, p.end, label(p) || undefined)}>
+                      <Repeat /> 반복
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </li>
+        ) : null}
+        {keyChange && rk ? (
+          <li className="flex gap-3">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-voice/15 font-mono text-[11px] font-bold text-voice">{(top ? 1 : 0) + (weak.length ? 1 : 0) + 1}</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">
+                키를 <span className="text-voice">{fmtSigned(rk.key)}</span>로 바꿔 보세요 <span className="text-xs font-normal text-muted-foreground">(지금 {fmtSigned(s.keyShift)})</span>
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{adv.suggest ? '실제로 부른 음역 기준이에요. 아래 음역 다시 분석에서 근거를 볼 수 있어요.' : '내 음역 기준 추천 키예요.'}</p>
+              <Button size="xs" variant="outline" className="mt-1.5" onClick={() => a.setKey(rk.key)}>
+                키 {fmtSigned(rk.key)}로 바꾸기
+              </Button>
+            </div>
+          </li>
+        ) : null}
+      </ol>
+    </section>
   )
 }
 
@@ -271,7 +456,8 @@ function TakeCard() {
             <Eye /> 스튜디오에서 선과 함께 다시 보기
           </Button>
           <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-            아래 코칭의 시간 버튼을 누르면 그 부분부터 들려줘요. 반주를 끄고 내 목소리만 들으면 음이 어긋난 곳이 더 잘 들려요. 다시 보기에서는 부를 때 그린 내 음 선이 노트 위에 맞음·어긋남 색으로 다시 그려져요.
+            아래 코칭의 시간 버튼을 누르면 그 부분부터 들려줘요. 반주를 끄고 내 목소리만 들으면 음이 어긋난 곳이 더 잘 들려요. 다시 보기에서는 부를 때 그린 내 음 선이 노트 위에 맞음·어긋남 색으로 다시
+            그려져요.
           </p>
           <FxPanel />
         </>
@@ -312,7 +498,7 @@ function CoachingSection({ report }: { report: Report }) {
   const { s, a } = useStudio()
   const phraseOf = (t: number) => report.phrases.find((p) => t >= p.start - 0.05 && t <= p.end + 0.05)
   return (
-    <section className="rounded-2xl border border-border bg-card p-5 lg:col-span-2">
+    <section id="coaching" className="scroll-mt-20 rounded-2xl border border-border bg-card p-5 lg:col-span-2">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="flex items-center gap-1.5 text-sm font-semibold">
           <Lightbulb className="size-4 text-caution" /> 오늘의 코칭
@@ -493,7 +679,10 @@ function PhraseSection({ phrases, prev }: { phrases: PhraseScore[]; prev?: Histo
               type="button"
               role="listitem"
               onClick={() => setSel(i === sel ? null : i)}
-              className={cn('group relative flex h-full min-w-0 flex-1 flex-col justify-end rounded-sm bg-muted/40 outline-none focus-visible:ring-2 focus-visible:ring-ring', sel === i && 'ring-2 ring-foreground/60')}
+              className={cn(
+                'group relative flex h-full min-w-0 flex-1 flex-col justify-end rounded-sm bg-muted/40 outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                sel === i && 'ring-2 ring-foreground/60',
+              )}
               title={`${fmtTime(p.start)} · ${p.score}점${dlt !== null ? ` (지난번 ${dlt >= 0 ? '+' : ''}${dlt})` : ''}${label(p) ? ` · ${label(p)}` : ''}`}
               aria-label={`${fmtTime(p.start)} 소절 ${p.score}점`}
             >
@@ -559,16 +748,22 @@ function PhraseSection({ phrases, prev }: { phrases: PhraseScore[]; prev?: Histo
 /* 실제로 부른 기록으로 음역 다시 분석 + 다음 키 추천                        */
 /* ------------------------------------------------------------------ */
 
-function RangeAdviceCard({ report, history, isSaved }: { report: Report; history: HistoryEntry[]; isSaved: boolean }) {
-  const { s, d, a } = useStudio()
+/** 실제로 부른 기록(최근 3번)으로 음역을 다시 분석하고 다음 연습 키를 고른다 */
+function useRangeAdvice(report: Report, history: HistoryEntry[], isSaved: boolean) {
+  const { s, d } = useStudio()
   // 최근 3번의 기록을 합친다 (방금 기록이 아직 저장 전이면 그것 + 지난 2번)
   const past = history.filter((h) => h.pitch?.length)
   const lists = isSaved ? past.slice(-3).map((h) => h.pitch!) : [report.pitchStats, ...past.slice(-2).map((h) => h.pitch!)]
   const measured = s.userRange
   const adv = useMemo(() => analyzeRange(mergeStats(lists), measured, lists.length), [lists.map((l) => l.length).join(','), report, measured.low, measured.high]) // eslint-disable-line react-hooks/exhaustive-deps
+  const rk = d.summary ? engine.recommendKey(d.summary, adv.suggest ?? measured, s.octaveMode) : null
+  return { adv, rk, measured }
+}
+
+function RangeAdviceCard({ report, history, isSaved }: { report: Report; history: HistoryEntry[]; isSaved: boolean }) {
+  const { s, a } = useStudio()
+  const { adv, rk, measured } = useRangeAdvice(report, history, isSaved)
   const nm = (m: number) => noteName(Math.round(m), s.notation)
-  const target = adv.suggest ?? measured
-  const rk = d.summary ? engine.recommendKey(d.summary, target, s.octaveMode) : null
   const keyText = (k: number, o: number) => `키 ${fmtSigned(k)}${o ? (o > 0 ? ' · +1옥' : ' · −1옥') : ''}`
 
   const edgeText = (e: EdgeAdvice | null, which: 'high' | 'low') => {
@@ -580,7 +775,10 @@ function RangeAdviceCard({ report, history, isSaved }: { report: Report; history
       return (
         <>
           <b className="text-foreground">{nm(e.okMidi)}</b>까지는 안정적이었고, 그 {word} 노트 {b.notes}개 중 맞은 건 {b.ok}개예요
-          {b.sung ? ` (평균 ${b.cents > 0 ? '+' : ''}${Math.round(b.cents)}센트${which === 'high' && b.cents < -30 ? ', 덜 올라감' : which === 'low' && b.cents > 30 ? ', 덜 내려감' : ''})` : ' (거의 못 냄)'}.
+          {b.sung
+            ? ` (평균 ${b.cents > 0 ? '+' : ''}${Math.round(b.cents)}센트${which === 'high' && b.cents < -30 ? ', 덜 올라감' : which === 'low' && b.cents > 30 ? ', 덜 내려감' : ''})`
+            : ' (거의 못 냄)'}
+          .
         </>
       )
     if ((which === 'high' && e.okMidi > cur + 0.5) || (which === 'low' && e.okMidi < cur - 0.5))
@@ -591,7 +789,8 @@ function RangeAdviceCard({ report, history, isSaved }: { report: Report; history
       )
     return (
       <>
-        <b className="text-foreground">{nm(e.okMidi)}</b>까지 안정적으로 냈어요. {b.notes ? `그 ${word} 노트는 ${b.notes}개뿐이라 한계는 아직 몰라요.` : `이 곡에는 그보다 ${which === 'high' ? '높은' : '낮은'} 음이 없어서 한계는 아직 몰라요.`}
+        <b className="text-foreground">{nm(e.okMidi)}</b>까지 안정적으로 냈어요.{' '}
+        {b.notes ? `그 ${word} 노트는 ${b.notes}개뿐이라 한계는 아직 몰라요.` : `이 곡에는 그보다 ${which === 'high' ? '높은' : '낮은'} 음이 없어서 한계는 아직 몰라요.`}
       </>
     )
   }
@@ -600,7 +799,9 @@ function RangeAdviceCard({ report, history, isSaved }: { report: Report; history
     <section className="rounded-2xl border border-border bg-card p-5 lg:col-span-2">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold">음역 다시 분석</h2>
-        <span className="text-[11px] text-muted-foreground">{adv.sessions > 1 ? `이 곡 최근 ${adv.sessions}번 연습을 합쳐서` : '이번 연습 기준'} · 음 높이를 잰 노트 {adv.measured}개</span>
+        <span className="text-[11px] text-muted-foreground">
+          {adv.sessions > 1 ? `이 곡 최근 ${adv.sessions}번 연습을 합쳐서` : '이번 연습 기준'} · 음 높이를 잰 노트 {adv.measured}개
+        </span>
       </div>
       {!adv.enough ? (
         <p className="mt-2 text-sm text-muted-foreground">
@@ -620,7 +821,8 @@ function RangeAdviceCard({ report, history, isSaved }: { report: Report; history
               {edgeText(adv.low, 'low')}
             </p>
             <p className="text-[11px] text-muted-foreground">
-              '안정적' = 그 음 노트를 2번 이상 불러서 {Math.round(adv.okBar * 100)}% 넘게 맞힌 것{adv.okBar < 0.6 ? ' (전체 정확도에 맞춰 기준을 낮췄어요)' : ''}. {adv.sessions === 1 ? '한 번 기록이라 컨디션에 따라 달라질 수 있어요. 여러 번 연습할수록 더 정확해져요.' : ''}
+              '안정적' = 그 음 노트를 2번 이상 불러서 {Math.round(adv.okBar * 100)}% 넘게 맞힌 것{adv.okBar < 0.6 ? ' (전체 정확도에 맞춰 기준을 낮췄어요)' : ''}.{' '}
+              {adv.sessions === 1 ? '한 번 기록이라 컨디션에 따라 달라질 수 있어요. 여러 번 연습할수록 더 정확해져요.' : ''}
             </p>
           </div>
           <div className="space-y-3">
@@ -629,7 +831,14 @@ function RangeAdviceCard({ report, history, isSaved }: { report: Report; history
               {adv.suggest ? (
                 <>
                   <p className="mt-0.5 text-sm">
-                    측정값 <span className="font-mono">{nm(measured.low)} ~ {nm(measured.high)}</span> → <b className="font-mono text-voice">{nm(adv.suggest.low)} ~ {nm(adv.suggest.high)}</b>
+                    측정값{' '}
+                    <span className="font-mono">
+                      {nm(measured.low)} ~ {nm(measured.high)}
+                    </span>{' '}
+                    →{' '}
+                    <b className="font-mono text-voice">
+                      {nm(adv.suggest.low)} ~ {nm(adv.suggest.high)}
+                    </b>
                   </p>
                   <Button size="sm" className="mt-2" onClick={() => a.setUserRange(adv.suggest!)}>
                     내 음역을 이걸로 고치기
@@ -638,7 +847,11 @@ function RangeAdviceCard({ report, history, isSaved }: { report: Report; history
                 </>
               ) : (
                 <p className="mt-0.5 text-sm">
-                  측정한 음역(<span className="font-mono">{nm(measured.low)} ~ {nm(measured.high)}</span>)과 잘 맞아요.
+                  측정한 음역(
+                  <span className="font-mono">
+                    {nm(measured.low)} ~ {nm(measured.high)}
+                  </span>
+                  )과 잘 맞아요.
                 </p>
               )}
             </div>
@@ -691,11 +904,25 @@ function RangeSection({ cells }: { cells: RangeCell[] }) {
               {keys.map((m) => {
                 const c = map.get(m)
                 return (
-                  <div key={m} className="flex min-w-0 flex-1 flex-col items-center gap-1" title={c ? `${noteName(m, s.notation)} · 노트 ${c.notes}개 · 맞힘 ${Math.round(c.acc * 100)}% · 평균 ${c.cents > 0 ? '+' : ''}${Math.round(c.cents)}센트` : `${noteName(m, s.notation)} · 이 곡에 없음`}>
+                  <div
+                    key={m}
+                    className="flex min-w-0 flex-1 flex-col items-center gap-1"
+                    title={
+                      c
+                        ? `${noteName(m, s.notation)} · 노트 ${c.notes}개 · 맞힘 ${Math.round(c.acc * 100)}% · 평균 ${c.cents > 0 ? '+' : ''}${Math.round(c.cents)}센트`
+                        : `${noteName(m, s.notation)} · 이 곡에 없음`
+                    }
+                  >
                     <div
                       className={cn(
                         'flex h-14 w-full items-end justify-center rounded-md border pb-1 font-mono text-[10px] font-bold tabular',
-                        !c ? 'border-border bg-muted/20 text-transparent' : c.acc >= 0.75 ? 'border-voice/40 bg-voice/25 text-voice' : c.acc >= 0.5 ? 'border-caution/40 bg-caution/25 text-caution' : 'border-miss/40 bg-miss/25 text-miss',
+                        !c
+                          ? 'border-border bg-muted/20 text-transparent'
+                          : c.acc >= 0.75
+                            ? 'border-voice/40 bg-voice/25 text-voice'
+                            : c.acc >= 0.5
+                              ? 'border-caution/40 bg-caution/25 text-caution'
+                              : 'border-miss/40 bg-miss/25 text-miss',
                         black(m) && 'opacity-80',
                       )}
                     >
@@ -723,7 +950,14 @@ function RangeSection({ cells }: { cells: RangeCell[] }) {
             <RangeCompare
               notation={s.notation}
               spans={[
-                { label: '원곡 (현재 키)', low: d.summary.low.midi + d.shift, high: d.summary.high.midi + d.shift, coreLow: d.summary.coreLow + d.shift, coreHigh: d.summary.coreHigh + d.shift, tone: 'ice' },
+                {
+                  label: '원곡 (현재 키)',
+                  low: d.summary.low.midi + d.shift,
+                  high: d.summary.high.midi + d.shift,
+                  coreLow: d.summary.coreLow + d.shift,
+                  coreHigh: d.summary.coreHigh + d.shift,
+                  tone: 'ice',
+                },
                 { label: '이번에 낸 음', low: ss.userLow, high: ss.userHigh, tone: 'voice' },
                 { label: '측정한 내 음역', low: s.userRange.low, high: s.userRange.high, tone: 'voice' },
               ]}
@@ -897,7 +1131,16 @@ function FxPanel() {
             />
             <FxSlider label="세기" value={fx.tune} min={0} max={1} step={0.05} fmt={pct} onChange={(v) => set({ tune: v })} />
             {fx.tuneMode === 'live' ? (
-              <FxSlider label="속도" value={fx.tuneSpeed} min={0} max={250} step={10} fmt={(v) => (v <= 10 ? '로봇' : `${v}ms`)} onChange={(v) => set({ tuneSpeed: v })} hint="작을수록 음에 딱 붙어요(로봇 느낌), 클수록 자연스러워요" />
+              <FxSlider
+                label="속도"
+                value={fx.tuneSpeed}
+                min={0}
+                max={250}
+                step={10}
+                fmt={(v) => (v <= 10 ? '로봇' : `${v}ms`)}
+                onChange={(v) => set({ tuneSpeed: v })}
+                hint="작을수록 음에 딱 붙어요(로봇 느낌), 클수록 자연스러워요"
+              />
             ) : null}
           </FxGroup>
           <FxGroup title="리버브" hint="공간의 울림">
@@ -973,7 +1216,25 @@ function FxGroup({ title, hint, children }: { title: string; hint: string; child
   )
 }
 
-function FxSlider({ label, value, min, max, step, fmt, onChange, hint }: { label: string; value: number; min: number; max: number; step: number; fmt: (v: number) => string; onChange: (v: number) => void; hint?: string }) {
+function FxSlider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  fmt,
+  onChange,
+  hint,
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  step: number
+  fmt: (v: number) => string
+  onChange: (v: number) => void
+  hint?: string
+}) {
   return (
     <div title={hint}>
       <label className="flex items-center gap-3">
