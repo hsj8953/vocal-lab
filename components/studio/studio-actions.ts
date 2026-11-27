@@ -493,17 +493,26 @@ export function createActions(env: ActionEnv) {
   const startReplay = (from?: number) => {
     const st = sRef.current
     if (!st.takeAvailable || !live.replayTrace?.length) return notify('다시 볼 녹음이 없어요. 연습 시작으로 먼저 불러 주세요.')
-    pause()
+    // 결과 화면에서 듣던 곳이 연습 구간 안이면 거기서 이어서
+    const span = st.practiceSpan
+    const cur = live.time
+    const inSpan = !!span && cur > span.t0 + 0.2 && cur < span.t1 - 0.3
+    const keep = from === undefined && inSpan && st.playing
+    if (!keep) pause()
     live.replay = true
     live.pitchMidi = null
     live.cmp = null
+    live.carry = keep
     sRef.current = { ...st, replay: true, view: 'studio' }
     set({ replay: true, view: 'studio', loop: null })
-    seek(Math.max(0, from ?? st.practiceSpan?.t0 ?? 0))
+    if (keep) return
+    seek(Math.max(0, from ?? (inSpan ? cur : (span?.t0 ?? 0))))
     void play()
   }
+  /** back: 결과 화면으로 — 재생 중이면 끊지 않고 그대로 이어서 듣는다 */
   const stopReplay = (back = false) => {
-    pause()
+    if (back && sRef.current.playing) live.carry = true
+    else pause()
     live.replay = false
     live.pitchMidi = null
     live.cmp = null

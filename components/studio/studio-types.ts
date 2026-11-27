@@ -214,6 +214,8 @@ export interface Live {
   replayTrace: TracePoint[] | null
   /** 녹음 다시 보기 중 */
   replay: boolean
+  /** 결과 ↔ 다시 보기로 넘어갈 때 재생을 끊지 않고 이어 가기 (화면 전환 때 한 번 쓰고 지운다) */
+  carry: boolean
   noteScore: Map<string, [number, number, number]>
   windowSec: number
 }
@@ -325,6 +327,7 @@ export function createLive(): Live {
     targetNoteId: null,
     trace: [],
     replayTrace: null,
+    carry: false,
     origCurve: null,
     origLine: false,
     checkGaps: [],

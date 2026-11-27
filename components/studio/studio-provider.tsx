@@ -423,7 +423,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (prevView.current !== s.view && sRef.current.practice.phase === 'idle' && !sRef.current.loop) {
       // 다시 보기 중에 다른 화면으로 가면 다시 보기를 끝낸다 (스튜디오로 들어올 때는 그대로 재생)
-      if (sRef.current.replay && s.view !== 'studio') a.stopReplay()
+      if (live.current.carry) live.current.carry = false
+      else if (sRef.current.replay && s.view !== 'studio') a.stopReplay()
       else if (!sRef.current.replay) a.pause()
     }
     prevView.current = s.view
