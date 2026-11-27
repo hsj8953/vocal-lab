@@ -8,6 +8,7 @@ import { buildReport } from '@/lib/report'
 import { saveHistory, songKey } from '@/lib/history'
 import * as library from '@/lib/library'
 import * as tabSession from '@/lib/tab-session'
+import * as takesDb from '@/lib/takes'
 import { fillFromCurve } from '@/lib/note-check'
 import { FX_PRESETS, createVocalChain, layerGains, pitchCurve, renderKey, renderLayers, encodeWav, type FxParams, type RenderedLayers, type VocalChain } from '@/lib/vocal-fx'
 import type { LyricLine, Lyrics } from './studio-types'
@@ -298,8 +299,24 @@ export function createActions(env: ActionEnv) {
     // 새로고침해도 이 연습을 다시 볼 수 있게 탭 저장소에 (녹음은 합치고 줄인 뒤)
     const songId = st.project.real ? st.librarySongId : 'demo'
     const trace = live.replayTrace
-    const saveRec = () =>
-      void tabSession.savePractice({ songId, session, span, take: take ? { ...take } : null, trace: trace ? trace.map((p) => ({ ...p })) : null })
+    const saveRec = () => {
+      // 곡 목록에 있는 곡이면 이 녹음을 곡에 저장 (보관 안 한 옛 녹음은 지워짐)
+      const tk = take
+      const libId = st.project.real ? st.librarySongId : null
+      const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+      void tabSession.savePractice({ songId, session, span, take: take ? { ...take } : null, trace: trace ? trace.map((p) => ({ ...p })) : null, takeId: libId && tk && report.enough ? id : null })
+      // 너무 짧게 부른 연습(분석 불가)은 곡에 남기지 않는다 — 실수로 눌러도 예전 녹음이 지워지지 않게
+      if (!libId || !tk || !report.enough) return set({ currentTakeId: null })
+      void takesDb
+        .saveLatest(
+          { id, songId: libId, at: Date.now(), starred: false, score: report.score, keyShift: st.keyShift, rate: tk.rate, span, dur: tk.data.length / tk.sr },
+          { id, session, take: { t0: tk.t0, sr: tk.sr, rate: tk.rate, pcm: takesDb.toPcm(tk.data) }, trace: trace ? trace.map((p) => ({ ...p })) : null },
+        )
+        .then((ok) => {
+          if (ok) set((p) => ({ currentTakeId: id, takesRev: p.takesRev + 1 }))
+          else notify('저장 공간이 부족해서 녹음을 곡에 남기지 못했어요. 안 쓰는 곡이나 보관한 녹음을 지워 주세요.')
+        })
+    }
     if (segs.length) void prepareTake(segs).then(saveRec)
     else saveRec()
     set((p) => ({
@@ -532,7 +549,7 @@ export function createActions(env: ActionEnv) {
    * 새로고침 전 연습 되살리기. 노트 id는 불러올 때마다 새로 만들어지므로
    * 시작 시간과 음으로 지금 노트에 다시 이어 붙인다.
    */
-  const restorePractice = (rec: tabSession.PracticeRecord) => {
+  const restorePractice = (rec: Pick<tabSession.PracticeRecord, 'session' | 'span' | 'take' | 'trace' | 'takeId'>) => {
     const notes = sRef.current.notes
     const idOf = new Map<string, string>()
     for (const nr of rec.session.perNote) {
@@ -554,6 +571,7 @@ export function createActions(env: ActionEnv) {
       practiceSpan: rec.span,
       takeAvailable: !!rec.take,
       takeSpeed: rec.take?.rate ?? 1,
+      currentTakeId: rec.takeId ?? null,
     })
     if (rec.take) void applyFx(sRef.current.fx, true)
   }
@@ -835,6 +853,12 @@ export function createActions(env: ActionEnv) {
       const cur = al ? Math.round(al.offset * 1000) : undefined
       if (want !== undefined && cur !== undefined && Math.abs(want - cur) >= 1) nudgeMr((want - cur) / 1000)
       void library.patchSong(id, (x) => ({ ...x, opened: Date.now() }))
+      // 이 곡의 가장 최근 녹음을 불러와 둔다 (연습 결과에서 바로 들을 수 있게) — 녹음한 키와 같을 때만
+      const latest = (await takesDb.listTakes(id))[0]
+      if (latest && latest.keyShift === clamp(song.settings.keyShift ?? 0, -7, 7)) {
+        const r = await takesDb.loadTake(latest.id)
+        if (r) restorePractice({ session: r.data.session, span: r.meta.span, take: { t0: r.data.take.t0, sr: r.data.take.sr, rate: r.data.take.rate, data: takesDb.fromPcm(r.data.take.pcm) }, trace: r.data.trace, takeId: latest.id })
+      }
       return true
     } finally {
       set((p) => ({ libraryOpening: null, libraryRev: p.libraryRev + 1 }))
@@ -848,8 +872,37 @@ export function createActions(env: ActionEnv) {
     set((p) => ({ libraryRev: p.libraryRev + 1 }))
   }
 
+  const setKey = (keyShift: number) => {
+    const k = clamp(keyShift, -7, 7)
+    set({ keyShift: k })
+    const id = sRef.current.librarySongId
+    if (id && sRef.current.project.real) void library.patchSong(id, (x) => ({ ...x, settings: { ...x.settings, keyShift: k } }))
+  }
+
+  /* 곡에 저장된 녹음 */
+  const openTake = async (id: string) => {
+    const r = await takesDb.loadTake(id)
+    if (!r) return notify('녹음을 찾을 수 없어요.')
+    pause()
+    if (sRef.current.keyShift !== r.meta.keyShift) setKey(r.meta.keyShift)
+    const rec = { session: r.data.session, span: r.meta.span, take: { t0: r.data.take.t0, sr: r.data.take.sr, rate: r.data.take.rate, data: takesDb.fromPcm(r.data.take.pcm) }, trace: r.data.trace }
+    restorePractice(rec)
+    set({ currentTakeId: id, view: 'result' })
+    void tabSession.savePractice({ songId: sRef.current.librarySongId, ...rec, takeId: id })
+  }
+  const starTake = async (id: string, starred: boolean) => {
+    await takesDb.setStar(id, starred)
+    set((p) => ({ takesRev: p.takesRev + 1 }))
+    notify(starred ? '이 녹음을 보관했어요. 다음 연습 때도 지워지지 않아요.' : '보관을 풀었어요. 가장 최근 녹음이 아니면 다음 연습 때 지워져요.')
+  }
+  const removeTake = async (id: string) => {
+    await takesDb.deleteTake(id)
+    set((p) => ({ takesRev: p.takesRev + 1, currentTakeId: p.currentTakeId === id ? null : p.currentTakeId }))
+  }
+
   const deleteLibrarySong = async (id: string) => {
     await library.deleteSong(id)
+    void takesDb.deleteSongTakes(id)
     set((p) => ({ libraryRev: p.libraryRev + 1, librarySongId: p.librarySongId === id ? null : p.librarySongId }))
     notify('목록에서 지웠어요. 편집한 노트와 가사 기록은 남아 있어서, 같은 파일을 다시 넣으면 돌아와요.')
   }
@@ -1060,12 +1113,7 @@ export function createActions(env: ActionEnv) {
     },
 
     /* 키 · 음역 */
-    setKey: (keyShift: number) => {
-      const k = clamp(keyShift, -7, 7)
-      set({ keyShift: k })
-      const id = sRef.current.librarySongId
-      if (id && sRef.current.project.real) void library.patchSong(id, (x) => ({ ...x, settings: { ...x.settings, keyShift: k } }))
-    },
+    setKey,
     openLibrarySong,
     renameLibrarySong,
     deleteLibrarySong,
@@ -1101,6 +1149,9 @@ export function createActions(env: ActionEnv) {
     setShowOrigLine: (showOrigLine: boolean) => set({ showOrigLine }),
     setOrigLineAlways: (origLineAlways: boolean) => set({ origLineAlways }),
     restorePractice,
+    openTake,
+    starTake,
+    removeTake,
     setFx,
     setFxPreset,
     setFxCompare,

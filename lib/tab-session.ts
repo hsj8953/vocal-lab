@@ -65,6 +65,8 @@ export interface PracticeRecord {
   span: { t0: number; t1: number } | null
   take: { t0: number; sr: number; rate: number; data: Float32Array } | null
   trace: { t: number; midi: number | null; tier: string | null }[] | null
+  /** 곡에 저장된 녹음이면 그 id */
+  takeId?: string | null
 }
 
 const DB = 'vocallab-session'

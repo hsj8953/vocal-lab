@@ -2,6 +2,8 @@
 
 import {
   ArrowLeft,
+  Star,
+  Trash2,
   ChevronDown,
   Download,
   Eye,
@@ -29,6 +31,7 @@ import { Slider } from '@/components/ui/slider'
 import { fmtSigned, fmtTime, noteName } from '@/lib/music'
 import { cn } from '@/lib/utils'
 import { FX_PRESETS, type FxParams } from '@/lib/vocal-fx'
+import { listTakes, type TakeMeta } from '@/lib/takes'
 import { analyzeRange, mergeStats, type EdgeAdvice } from '@/lib/range-advice'
 import { RangeCompare } from './range-compare'
 import { Seg } from './ui-bits'
@@ -112,7 +115,8 @@ export function ResultView() {
             <Mic /> 연습 시작
           </Button>
         </div>
-      ) : !report.enough ? (
+      ) : null}
+      {empty ? null : !report.enough ? (
         <div className="mt-8 rounded-2xl border border-dashed border-input p-10 text-center">
           <p className="text-sm text-muted-foreground">부른 노트가 {report.notesSung}개라 분석하기엔 짧아요. 한 소절 이상 길게 불러 주세요.</p>
           <Button className="mt-4" onClick={() => void a.startPractice()}>
@@ -126,6 +130,7 @@ export function ResultView() {
             <NextStepsCard report={report} history={history} isSaved={isSaved} />
           </div>
           <TakeCard />
+          <SongTakes />
           <CoachingSection report={report} />
           <MetricsSection groups={report.groups} prev={prev} />
           <PhraseSection phrases={report.phrases} prev={prev} />
@@ -134,6 +139,11 @@ export function ResultView() {
           <NoteTable report={report} />
         </div>
       )}
+      {empty || !report.enough ? (
+        <div className="mt-5">
+          <SongTakes />
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -392,6 +402,113 @@ function NextStepsCard({ report, history, isSaved }: { report: Report; history: 
 }
 
 /* ------------------------------------------------------------------ */
+/* 곡에 저장된 녹음                                                       */
+/* ------------------------------------------------------------------ */
+
+function useSongTakes() {
+  const { s } = useStudio()
+  const [list, setList] = useState<TakeMeta[]>([])
+  const id = s.project.real ? s.librarySongId : null
+  useEffect(() => {
+    let alive = true
+    if (!id) {
+      setList([])
+      return
+    }
+    void listTakes(id).then((l) => alive && setList(l))
+    return () => {
+      alive = false
+    }
+  }, [id, s.takesRev])
+  return { list, songId: id }
+}
+
+/** 지금 듣는 녹음 보관(⭐) 버튼 */
+function TakeStar() {
+  const { s, a } = useStudio()
+  const { list } = useSongTakes()
+  const cur = list.find((m) => m.id === s.currentTakeId)
+  if (!cur) return null
+  return (
+    <Button
+      size="xs"
+      variant={cur.starred ? 'secondary' : 'outline'}
+      className="ml-auto"
+      onClick={() => void a.starTake(cur.id, !cur.starred)}
+      title={cur.starred ? '보관을 풀면, 가장 최근 녹음이 아닐 때 다음 연습에서 지워져요' : '보관하면 다음에 연습해도 지워지지 않아요'}
+    >
+      <Star className={cn(cur.starred && 'fill-caution text-caution')} /> {cur.starred ? '보관됨' : '보관하기'}
+    </Button>
+  )
+}
+
+function SongTakes() {
+  const { s, a } = useStudio()
+  const { list, songId } = useSongTakes()
+  if (!s.project.real) return null
+  const latestId = list[0]?.id
+  const when = (t: number) => {
+    const d = new Date(t)
+    return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  }
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5 lg:col-span-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold">
+          <Mic className="size-4 text-voice" /> 이 곡의 내 녹음
+        </h2>
+        <span className="text-[11px] text-muted-foreground">가장 최근 녹음 1개는 자동으로 남아요. 다른 녹음은 ⭐ 보관해야 다음 연습 때 지워지지 않아요.</span>
+      </div>
+      {!songId ? (
+        <p className="mt-2 text-sm text-muted-foreground">곡 목록에 저장된 곡만 녹음을 남길 수 있어요. 곡 불러오기 화면에서 이 곡을 목록에 저장해 주세요.</p>
+      ) : !list.length ? (
+        <p className="mt-2 text-sm text-muted-foreground">아직 저장된 녹음이 없어요. 연습 시작으로 부르면 여기 남아요.</p>
+      ) : (
+        <ul className="mt-3 divide-y divide-border rounded-xl border border-border">
+          {list.map((m) => {
+            const isCur = m.id === s.currentTakeId
+            return (
+              <li key={m.id} className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm', isCur && 'bg-voice/8')}>
+                <button
+                  type="button"
+                  onClick={() => void a.starTake(m.id, !m.starred)}
+                  aria-label={m.starred ? '보관 풀기' : '보관하기'}
+                  aria-pressed={m.starred}
+                  className="rounded p-0.5 hover:bg-muted"
+                  title={m.starred ? '보관 풀기' : '보관하기'}
+                >
+                  <Star className={cn('size-4', m.starred ? 'fill-caution text-caution' : 'text-muted-foreground')} />
+                </button>
+                <span className="font-mono text-xs text-muted-foreground tabular">{when(m.at)}</span>
+                <span className={cn('w-10 font-mono font-semibold tabular', scoreColor(m.score))}>{m.score}점</span>
+                <span className="text-xs text-muted-foreground">
+                  키 {fmtSigned(m.keyShift)}
+                  {m.rate !== 1 ? ` · ${m.rate}x` : ''} · {fmtTime(m.dur)}
+                  {m.span ? ` · ${fmtTime(m.span.t0)}~${fmtTime(m.span.t1)}` : ''}
+                </span>
+                {m.id === latestId && !m.starred ? <span className="rounded bg-muted px-1.5 py-px text-[10px] text-muted-foreground">최근</span> : null}
+                <span className="ml-auto flex items-center gap-1.5">
+                  {isCur ? (
+                    <span className="text-xs font-medium text-voice">지금 보는 중</span>
+                  ) : (
+                    <Button size="xs" variant="secondary" onClick={() => void a.openTake(m.id)}>
+                      열기
+                    </Button>
+                  )}
+                  <Button size="xs" variant="ghost" aria-label="녹음 지우기" onClick={() => void a.removeTake(m.id)}>
+                    <Trash2 />
+                  </Button>
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* 내 노래 다시 듣기                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -415,6 +532,7 @@ function TakeCard() {
       <h2 className="flex items-center gap-1.5 text-sm font-semibold">
         <Headphones className="size-4 text-voice" /> 내 노래 다시 듣기
         {s.takeAvailable && s.takeSpeed !== 1 ? <span className="ml-1 rounded bg-voice/15 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-voice">{s.takeSpeed}x로 연습</span> : null}
+        <TakeStar />
       </h2>
       {s.takeAvailable && span ? (
         <>

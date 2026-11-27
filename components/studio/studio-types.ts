@@ -156,6 +156,10 @@ export interface StudioState {
   librarySongId: string | null
   /** 내 곡 목록이 바뀔 때마다 증가 */
   libraryRev: number
+  /** 지금 보고 있는 연습이 곡에 저장된 녹음이면 그 id */
+  currentTakeId: string | null
+  /** 곡 녹음 목록이 바뀔 때마다 올림 */
+  takesRev: number
   /** 목록에서 여는 중인 곡 */
   libraryOpening: string | null
   /** 스튜디오에서 녹음 다시 보기 중 (내 목소리 + 그때 그린 선) */
@@ -298,6 +302,8 @@ export function createInitialState(): StudioState {
     exporting: false,
     librarySongId: null,
     libraryRev: 0,
+    currentTakeId: null,
+    takesRev: 0,
     libraryOpening: null,
     replay: false,
     showOrigLine: true,
