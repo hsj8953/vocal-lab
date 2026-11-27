@@ -91,6 +91,8 @@ export interface PitchFrame {
   midi: number | null
   clarity: number
   level: number
+  /** 가장 큰 순간 값 0~1 (1에 가까우면 소리가 찢어짐) */
+  peak?: number
 }
 
 export interface DemoSinger {
@@ -1320,10 +1322,48 @@ export function onPitch(cb: (f: PitchFrame) => void): () => void {
 interface MicRuntime {
   stream?: MediaStream
   ctx?: AudioContext
-  node?: MediaStreamAudioSourceNode
+  /** 입력 감도를 거친 마이크 소리 (음 높이 분석·녹음·모니터링이 모두 여기서 나간다) */
+  node?: AudioNode
+  inGain?: GainNode
+  mon?: GainNode
+  monRev?: GainNode
   timer: ReturnType<typeof setInterval>
 }
 let mic: MicRuntime | null = null
+
+/* 마이크 설정: 입력 감도(배율), 내 목소리 듣기 음량(0~1), 듣기에 울림 넣기 */
+const micCfg = { gain: 1, monitor: 0, reverb: true }
+function applyMicCfg() {
+  if (!mic?.ctx) return
+  const t = mic.ctx.currentTime
+  mic.inGain?.gain.setTargetAtTime(micCfg.gain, t, 0.02)
+  const v = micCfg.monitor * micCfg.monitor
+  mic.mon?.gain.setTargetAtTime(v, t, 0.02)
+  mic.monRev?.gain.setTargetAtTime(micCfg.reverb ? v * 0.45 : 0, t, 0.02)
+}
+/** 마이크 입력 감도 (0.25~4배, 1 = 그대로) */
+export function setMicGain(g: number) {
+  micCfg.gain = Math.max(0.1, Math.min(8, g))
+  applyMicCfg()
+}
+/** 내 목소리 듣기 (이어폰 모니터링) 음량 0~1, 울림 */
+export function setMicMonitor(vol: number, reverb: boolean) {
+  micCfg.monitor = Math.max(0, Math.min(1, vol))
+  micCfg.reverb = reverb
+  applyMicCfg()
+}
+
+/** 모니터링용 짧은 울림 (노래방 느낌) */
+function monitorIR(ctx: BaseAudioContext): AudioBuffer {
+  const sr = ctx.sampleRate
+  const len = Math.round(sr * 1.4)
+  const ir = ctx.createBuffer(2, len, sr)
+  for (let c = 0; c < 2; c++) {
+    const d = ir.getChannelData(c)
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2) * (i < sr * 0.012 ? i / (sr * 0.012) : 1)
+  }
+  return ir
+}
 
 export function detectPitch(buf: Float32Array, sr: number): { hz: number; clarity: number; level: number } {
   const n = 1024
@@ -1421,21 +1461,37 @@ export async function startMic(opts: MicOptions = {}): Promise<MicResult> {
         if (n === 'NotAllowedError' || n === 'NotFoundError') throw e1
         stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       }
-      const ctx = new AudioContext()
+      // 내 목소리 듣기가 늦게 들리지 않게 짧은 지연으로
+      const ctx = new AudioContext({ latencyHint: 'interactive' })
       await ctx.resume().catch(() => {})
-      const node = ctx.createMediaStreamSource(stream)
+      const src = ctx.createMediaStreamSource(stream)
+      const inGain = ctx.createGain()
+      inGain.gain.value = micCfg.gain
+      src.connect(inGain)
       const an = ctx.createAnalyser()
       an.fftSize = 2048
-      node.connect(an)
+      inGain.connect(an)
+      // 내 목소리 듣기: 그대로 + 울림
+      const mon = ctx.createGain()
+      mon.gain.value = 0
+      inGain.connect(mon).connect(ctx.destination)
+      const conv = ctx.createConvolver()
+      conv.buffer = monitorIR(ctx)
+      const monRev = ctx.createGain()
+      monRev.gain.value = 0
+      inGain.connect(conv).connect(monRev).connect(ctx.destination)
       const buf = new Float32Array(an.fftSize)
       const spike = makeSpikeFilter()
       const timer = setInterval(() => {
         an.getFloatTimeDomainData(buf)
+        let peak = 0
+        for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i]))
         const { hz, clarity, level } = detectPitch(buf, ctx.sampleRate)
         const midi = spike(hz > 0 ? hzToMidi(hz) : null)
-        emit({ time: performance.now() / 1000, hz: midi === null ? null : midiToHz(midi), midi, clarity, level })
+        emit({ time: performance.now() / 1000, hz: midi === null ? null : midiToHz(midi), midi, clarity, level, peak })
       }, 20)
-      mic = { stream, ctx, node, timer }
+      mic = { stream, ctx, node: inGain, inGain, mon, monRev, timer }
+      applyMicCfg()
       return { mode: 'live', fellBack: false }
     } catch (e) {
       reason = micErrorMessage(e)

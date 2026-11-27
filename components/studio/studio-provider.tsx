@@ -309,6 +309,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           notation: v.notation ?? p.notation,
           volume: v.volume ?? p.volume,
           guideVolume: v.guideVolume ?? p.guideVolume,
+          micGain: v.micGain ?? p.micGain,
+          micMonitor: v.micMonitor ?? p.micMonitor,
+          micMonitorReverb: v.micMonitorReverb ?? p.micMonitorReverb,
           analysis: { ...p.analysis, ...(v.analysis ?? {}) },
           fx: v.fx ? { ...p.fx, ...v.fx } : p.fx,
           showOrigLine: v.showOrigLine ?? p.showOrigLine,
@@ -330,6 +333,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           notation: s.notation,
           volume: s.volume,
           guideVolume: s.guideVolume,
+          micGain: s.micGain,
+          micMonitor: s.micMonitor,
+          micMonitorReverb: s.micMonitorReverb,
           analysis: { sensitivity: s.analysis.sensitivity, splitSyllables: s.analysis.splitSyllables, autofill: s.analysis.autofill, pitchModel: s.analysis.pitchModel, crepeModel: s.analysis.crepeModel, separate: s.analysis.separate, forceGpu: s.analysis.forceGpu },
           fx: s.fx,
           fxPreset: s.fxPreset,
@@ -340,7 +346,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     } catch {
       /* 무시 */
     }
-  }, [s.guideVolume, s.userRange, s.syncMs, s.micLatencyMs, s.notation, s.volume, s.analysis.sensitivity, s.analysis.splitSyllables, s.analysis.autofill, s.analysis.pitchModel, s.analysis.crepeModel, s.analysis.separate, s.fx, s.fxPreset, s.showOrigLine, s.origLineAlways])
+  }, [s.guideVolume, s.micGain, s.micMonitor, s.micMonitorReverb, s.userRange, s.syncMs, s.micLatencyMs, s.notation, s.volume, s.analysis.sensitivity, s.analysis.splitSyllables, s.analysis.autofill, s.analysis.pitchModel, s.analysis.crepeModel, s.analysis.separate, s.fx, s.fxPreset, s.showOrigLine, s.origLineAlways])
+
+  /* 마이크 입력 감도 · 내 목소리 듣기 */
+  useEffect(() => engine.setMicGain(s.micGain), [s.micGain])
+  useEffect(() => engine.setMicMonitor(s.micMonitorOn ? s.micMonitor : 0, s.micMonitorReverb), [s.micMonitor, s.micMonitorOn, s.micMonitorReverb])
 
   /* 가이드 보컬: MR 재생 중이고 볼륨이 0보다 클 때만 만든다 */
   const guideOn = isReal && s.source === 'mr' && s.guideAvailable && s.guideVolume > 0

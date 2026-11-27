@@ -101,6 +101,14 @@ export interface StudioState {
   syncMs: number
   /** MR에 섞어 들을 가이드 보컬 볼륨 0~1 */
   guideVolume: number
+  /** 마이크 입력 감도 (배율, 1 = 그대로) */
+  micGain: number
+  /** 내 목소리 듣기 음량 0~1 */
+  micMonitor: number
+  /** 내 목소리 듣기 켜짐 — 스피커로 켜 둔 채 다시 열면 하울링이 나니 저장하지 않는다 */
+  micMonitorOn: boolean
+  /** 내 목소리 듣기에 울림 */
+  micMonitorReverb: boolean
   /** 가이드 보컬(분리 보컬 또는 보컬 파일)이 있는지 */
   guideAvailable: boolean
   /** 가사 (.lrc) */
@@ -260,6 +268,10 @@ export function createInitialState(): StudioState {
     syncMs: 0,
     micLatencyMs: 60,
     guideVolume: 0,
+    micGain: 1,
+    micMonitor: 0.6,
+    micMonitorOn: false,
+    micMonitorReverb: true,
     guideAvailable: false,
     lyrics: null,
     bufferStatus: 'loading',

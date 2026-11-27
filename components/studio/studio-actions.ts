@@ -1041,6 +1041,10 @@ export function createActions(env: ActionEnv) {
     },
     setSyncMs: (ms: number) => set({ syncMs: clamp(Math.round(ms), -800, 800) }),
     setMicLatency: (ms: number) => set({ micLatencyMs: clamp(Math.round(ms), 0, 300) }),
+    setMicGain: (micGain: number) => set({ micGain: Math.max(0.25, Math.min(4, micGain)) }),
+    setMicMonitor: (micMonitor: number) => set({ micMonitor: Math.max(0, Math.min(1, micMonitor)) }),
+    setMicMonitorOn: (micMonitorOn: boolean) => set({ micMonitorOn }),
+    setMicMonitorReverb: (micMonitorReverb: boolean) => set({ micMonitorReverb }),
     setGuideVolume: (v: number) => {
       playerRef.current?.setGuideVolume(clamp(v, 0, 1))
       set({ guideVolume: clamp(v, 0, 1) })
