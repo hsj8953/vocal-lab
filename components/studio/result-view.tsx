@@ -715,23 +715,33 @@ function FxPanel() {
           </span>
         ) : null}
       </div>
-      <div className="mt-2.5 grid grid-cols-3 gap-1.5">
-        {FX_PRESETS.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => a.setFxPreset(p.id)}
-            title={p.desc}
-            aria-pressed={s.fxPreset === p.id}
-            className={cn(
-              'rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors',
-              s.fxPreset === p.id ? 'border-voice bg-voice/15 text-voice' : 'border-border bg-background/40 hover:bg-muted',
-            )}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
+      {(
+        [
+          ['style', '분위기'],
+          ['tone', '음색'],
+        ] as const
+      ).map(([g, title]) => (
+        <div key={g} className="mt-2.5">
+          <p className="mb-1 text-[11px] font-medium text-muted-foreground">{title}</p>
+          <div className="grid grid-cols-3 gap-1.5">
+            {FX_PRESETS.filter((p) => (p.group ?? 'style') === g).map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => a.setFxPreset(p.id)}
+                title={p.desc}
+                aria-pressed={s.fxPreset === p.id}
+                className={cn(
+                  'rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors',
+                  s.fxPreset === p.id ? 'border-voice bg-voice/15 text-voice' : 'border-border bg-background/40 hover:bg-muted',
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
       <p className="mt-1.5 text-[11px] text-muted-foreground">{FX_PRESETS.find((p) => p.id === s.fxPreset)?.desc ?? '직접 조절한 효과'}</p>
 
       {fx.tune > 0 ? (

@@ -70,6 +70,8 @@ export interface FxPreset {
   label: string
   desc: string
   fx: FxParams
+  /** style: 장르·분위기 / tone: 목소리 음색 */
+  group?: 'style' | 'tone'
 }
 
 export const FX_PRESETS: FxPreset[] = [
@@ -79,6 +81,13 @@ export const FX_PRESETS: FxPreset[] = [
   { id: 'ballad', label: '발라드', desc: '티 안 나는 음정 보정, 홀 울림', fx: { ...FX_OFF, tune: 0.8, tuneMode: 'note', gate: 0.4, high: 1.5, comp: 0.5, reverbType: 'hall', reverb: 0.28 } },
   { id: 'chorus', label: '풍성한 코러스', desc: '목소리 겹치기와 자동 화음', fx: { ...FX_OFF, tune: 0.8, tuneMode: 'note', gate: 0.4, comp: 0.5, high: 2, reverbType: 'hall', reverb: 0.3, double: 0.5, harmony: 'up3', harmonyMix: 0.35 } },
   { id: 'autotune', label: '오토튠 힙합', desc: '음에 딱 붙는 로봇 느낌', fx: { ...FX_OFF, tune: 1, tuneMode: 'live', tuneSpeed: 0, gate: 0.5, mid: 2, high: 2, comp: 0.7, reverbType: 'room', reverb: 0.2, echo: 0.15, echoTime: 220, echoFeedback: 0.2, double: 0.35 } },
+  /* 음색 — EQ·컴프레서·울림 조합 */
+  { id: 'soft', group: 'tone', label: '부드럽게', desc: '날카롭고 거친 소리를 눌러 매끈하게, 은은한 울림', fx: { ...FX_OFF, tune: 0.5, tuneMode: 'note', gate: 0.4, low: 1, mid: -3, high: -3, comp: 0.6, reverbType: 'hall', reverb: 0.22 } },
+  { id: 'warm', group: 'tone', label: '따뜻하게', desc: '저음을 살리고 고음을 줄여 포근하고 두툼하게', fx: { ...FX_OFF, gate: 0.4, low: 4, mid: -1, high: -4, comp: 0.5, reverbType: 'room', reverb: 0.2 } },
+  { id: 'bright', group: 'tone', label: '밝고 맑게', desc: '고음을 살려 또렷하고 산뜻하게', fx: { ...FX_OFF, gate: 0.4, low: -3, mid: 2, high: 5, comp: 0.5, reverbType: 'room', reverb: 0.16 } },
+  { id: 'close', group: 'tone', label: '속삭이듯 가까이', desc: '울림을 거의 빼고 압축해서 귀 옆에서 부르는 느낌', fx: { ...FX_OFF, gate: 0.5, low: 2, mid: 1, high: 2, comp: 0.8, reverbType: 'room', reverb: 0.07 } },
+  { id: 'dreamy', group: 'tone', label: '몽환적', desc: '길게 남는 울림과 에코, 살짝 겹친 목소리', fx: { ...FX_OFF, tune: 0.6, tuneMode: 'note', gate: 0.4, mid: -1, high: -1, comp: 0.5, reverbType: 'hall', reverb: 0.5, echo: 0.25, echoTime: 380, echoFeedback: 0.45, double: 0.25 } },
+  { id: 'radio', group: 'tone', label: '옛날 라디오', desc: '저음·고음을 깎아 작은 스피커로 듣는 느낌', fx: { ...FX_OFF, gate: 0.5, low: -12, mid: 6, high: -12, comp: 0.75, reverbType: 'room', reverb: 0.08 } },
 ]
 
 /** 다시 계산이 필요한 값이 바뀌었는지 */
