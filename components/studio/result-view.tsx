@@ -7,9 +7,10 @@ import { loadHistory, phraseDelta, songKey, type HistoryEntry } from '@/lib/hist
 import { buildReport, type Coaching, type Metric, type MetricGroup, type PhraseScore, type RangeCell, type Report, type Status } from '@/lib/report'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
-import { fmtTime, noteName } from '@/lib/music'
+import { fmtSigned, fmtTime, noteName } from '@/lib/music'
 import { cn } from '@/lib/utils'
 import { FX_PRESETS, type FxParams } from '@/lib/vocal-fx'
+import { analyzeRange, mergeStats, type EdgeAdvice } from '@/lib/range-advice'
 import { RangeCompare } from './range-compare'
 import { Seg } from './ui-bits'
 import { useFrame, useStudio } from './studio-provider'
@@ -106,6 +107,7 @@ export function ResultView() {
           <CoachingSection report={report} />
           <MetricsSection groups={report.groups} prev={prev} />
           <PhraseSection phrases={report.phrases} prev={prev} />
+          <RangeAdviceCard report={report} history={history} isSaved={isSaved} />
           <RangeSection cells={report.range} />
           <NoteTable report={report} />
         </div>
@@ -552,6 +554,120 @@ function PhraseSection({ phrases, prev }: { phrases: PhraseScore[]; prev?: Histo
 /* ------------------------------------------------------------------ */
 /* 음역별 정확도                                                         */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* 실제로 부른 기록으로 음역 다시 분석 + 다음 키 추천                        */
+/* ------------------------------------------------------------------ */
+
+function RangeAdviceCard({ report, history, isSaved }: { report: Report; history: HistoryEntry[]; isSaved: boolean }) {
+  const { s, d, a } = useStudio()
+  // 최근 3번의 기록을 합친다 (방금 기록이 아직 저장 전이면 그것 + 지난 2번)
+  const past = history.filter((h) => h.pitch?.length)
+  const lists = isSaved ? past.slice(-3).map((h) => h.pitch!) : [report.pitchStats, ...past.slice(-2).map((h) => h.pitch!)]
+  const measured = s.userRange
+  const adv = useMemo(() => analyzeRange(mergeStats(lists), measured, lists.length), [lists.map((l) => l.length).join(','), report, measured.low, measured.high]) // eslint-disable-line react-hooks/exhaustive-deps
+  const nm = (m: number) => noteName(Math.round(m), s.notation)
+  const target = adv.suggest ?? measured
+  const rk = d.summary ? engine.recommendKey(d.summary, target, s.octaveMode) : null
+  const keyText = (k: number, o: number) => `키 ${fmtSigned(k)}${o ? (o > 0 ? ' · +1옥' : ' · −1옥') : ''}`
+
+  const edgeText = (e: EdgeAdvice | null, which: 'high' | 'low') => {
+    if (!e) return null
+    const word = which === 'high' ? '위' : '아래'
+    const cur = which === 'high' ? measured.high : measured.low
+    const b = e.beyond
+    if (e.limited)
+      return (
+        <>
+          <b className="text-foreground">{nm(e.okMidi)}</b>까지는 안정적이었고, 그 {word} 노트 {b.notes}개 중 맞은 건 {b.ok}개예요
+          {b.sung ? ` (평균 ${b.cents > 0 ? '+' : ''}${Math.round(b.cents)}센트${which === 'high' && b.cents < -30 ? ', 덜 올라감' : which === 'low' && b.cents > 30 ? ', 덜 내려감' : ''})` : ' (거의 못 냄)'}.
+        </>
+      )
+    if ((which === 'high' && e.okMidi > cur + 0.5) || (which === 'low' && e.okMidi < cur - 0.5))
+      return (
+        <>
+          측정한 {which === 'high' ? '최고음' : '최저음'}({nm(cur)})보다 {which === 'high' ? '높은' : '낮은'} <b className="text-voice">{nm(e.okMidi)}</b>까지 안정적으로 냈어요.
+        </>
+      )
+    return (
+      <>
+        <b className="text-foreground">{nm(e.okMidi)}</b>까지 안정적으로 냈어요. {b.notes ? `그 ${word} 노트는 ${b.notes}개뿐이라 한계는 아직 몰라요.` : `이 곡에는 그보다 ${which === 'high' ? '높은' : '낮은'} 음이 없어서 한계는 아직 몰라요.`}
+      </>
+    )
+  }
+
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5 lg:col-span-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold">음역 다시 분석</h2>
+        <span className="text-[11px] text-muted-foreground">{adv.sessions > 1 ? `이 곡 최근 ${adv.sessions}번 연습을 합쳐서` : '이번 연습 기준'} · 음 높이를 잰 노트 {adv.measured}개</span>
+      </div>
+      {!adv.enough ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          {adv.why === 'shaky'
+            ? '음정이 전체적으로 흔들려서 높이별로 잘 된 음·안 된 음을 가려내기 어려워요. 싱크와 마이크 지연을 먼저 맞추고 다시 불러 보세요.'
+            : '음 높이를 잰 노트가 아직 적어서 분석하기 어려워요. 조금 더 길게 불러 보세요.'}
+        </p>
+      ) : (
+        <div className="mt-3 grid gap-4 md:grid-cols-[1fr_1fr]">
+          <div className="space-y-2.5 text-sm leading-relaxed">
+            <p>
+              <span className="mr-1.5 text-xs text-muted-foreground">높은 쪽</span>
+              {edgeText(adv.high, 'high')}
+            </p>
+            <p>
+              <span className="mr-1.5 text-xs text-muted-foreground">낮은 쪽</span>
+              {edgeText(adv.low, 'low')}
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              '안정적' = 그 음 노트를 2번 이상 불러서 {Math.round(adv.okBar * 100)}% 넘게 맞힌 것{adv.okBar < 0.6 ? ' (전체 정확도에 맞춰 기준을 낮췄어요)' : ''}. {adv.sessions === 1 ? '한 번 기록이라 컨디션에 따라 달라질 수 있어요. 여러 번 연습할수록 더 정확해져요.' : ''}
+            </p>
+          </div>
+          <div className="space-y-3">
+            <div className="rounded-xl bg-muted/50 p-3">
+              <div className="text-[11px] text-muted-foreground">실제로 부른 음역</div>
+              {adv.suggest ? (
+                <>
+                  <p className="mt-0.5 text-sm">
+                    측정값 <span className="font-mono">{nm(measured.low)} ~ {nm(measured.high)}</span> → <b className="font-mono text-voice">{nm(adv.suggest.low)} ~ {nm(adv.suggest.high)}</b>
+                  </p>
+                  <Button size="sm" className="mt-2" onClick={() => a.setUserRange(adv.suggest!)}>
+                    내 음역을 이걸로 고치기
+                  </Button>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">고치면 다른 곡의 추천 키에도 반영돼요. 키·음역 탭에서 다시 바꿀 수 있어요.</p>
+                </>
+              ) : (
+                <p className="mt-0.5 text-sm">
+                  측정한 음역(<span className="font-mono">{nm(measured.low)} ~ {nm(measured.high)}</span>)과 잘 맞아요.
+                </p>
+              )}
+            </div>
+            {rk ? (
+              <div className="rounded-xl bg-muted/50 p-3">
+                <div className="text-[11px] text-muted-foreground">다음 연습 키</div>
+                {rk.key === s.keyShift ? (
+                  <p className="mt-0.5 text-sm">
+                    지금 키(<b>{fmtSigned(s.keyShift)}</b>)가 {adv.suggest ? '실제로 부른 음역에도' : ''} 잘 맞아요.
+                  </p>
+                ) : (
+                  <>
+                    <p className="mt-0.5 text-sm">
+                      추천: <b className="text-voice">{keyText(rk.key, rk.octave)}</b> <span className="text-muted-foreground">(지금 키 {fmtSigned(s.keyShift)})</span>
+                    </p>
+                    <Button size="sm" variant="outline" className="mt-2" onClick={() => a.setKey(rk.key)}>
+                      키 {fmtSigned(rk.key)}로 바꾸기
+                    </Button>
+                    {adv.suggest ? <p className="mt-1.5 text-[11px] text-muted-foreground">실제로 부른 음역 기준이에요.</p> : null}
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
 
 function RangeSection({ cells }: { cells: RangeCell[] }) {
   const { s, d } = useStudio()

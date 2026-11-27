@@ -10,6 +10,8 @@ export interface HistoryEntry {
   score: number
   nums: Record<string, number>
   phrases: { start: number; score: number }[]
+  /** 음 높이별 기록 (음역 다시 분석용) */
+  pitch?: [number, number, number, number, number][]
 }
 
 const KEY = 'vocallab-history'
@@ -44,7 +46,7 @@ export function loadHistory(key: string): HistoryEntry[] {
 export function saveHistory(key: string, shift: number, r: Report): HistoryEntry[] {
   const st = read()
   const list = st[key] ?? []
-  list.push({ at: Date.now(), shift, score: r.score, nums: r.keyNums, phrases: r.phrases.map((p) => ({ start: Math.round(p.start * 100) / 100, score: p.score })) })
+  list.push({ at: Date.now(), shift, score: r.score, nums: r.keyNums, phrases: r.phrases.map((p) => ({ start: Math.round(p.start * 100) / 100, score: p.score })), pitch: r.pitchStats.map((c) => [c[0], c[1], c[2], c[3], Math.round(c[4])] as [number, number, number, number, number]) })
   st[key] = list.slice(-MAX_PER_SONG)
   write(st)
   return st[key]

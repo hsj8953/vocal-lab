@@ -1059,6 +1059,7 @@ export function createActions(env: ActionEnv) {
     setOctaveMode: (octaveMode: OctaveMode) => set({ octaveMode }),
     setMicPref: (micPref: 'auto' | 'demo') => set({ micPref }),
     nudgeRange,
+    setUserRange: (r: { low: number; high: number }) => set({ userRange: { low: r.low, high: r.high } }),
     startMeasure,
     confirmMeasure,
     cancelMeasure,

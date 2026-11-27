@@ -99,6 +99,8 @@ export interface Report {
   phrases: PhraseScore[]
   rows: NoteRow[]
   range: RangeCell[]
+  /** 음 높이별 기록 [음(MIDI, 실제 부른 높이), 노트 수, 부른 수, 맞은 수, 센트 합] — 음역 다시 분석용 */
+  pitchStats: [number, number, number, number, number][]
   notesInRange: number
   notesSung: number
   comparedWithOriginal: boolean
@@ -474,6 +476,19 @@ export function buildReport(inp: ReportInput): Report {
     v.c.push(x.midMed)
     rangeMap.set(m, v)
   }
+  const psMap = new Map<number, [number, number, number, number, number]>()
+  for (const x of na) {
+    const m = Math.round(x.n.midi)
+    const v = psMap.get(m) ?? [m, 0, 0, 0, 0]
+    v[1]++
+    if (Number.isFinite(x.midMed)) {
+      v[2]++
+      if (x.accurate) v[3]++
+      v[4] += x.midMed
+    }
+    psMap.set(m, v)
+  }
+  const pitchStats = [...psMap.values()].sort((a, b) => a[0] - b[0])
   const range: RangeCell[] = [...rangeMap.entries()].sort((a, b) => a[0] - b[0]).map(([midi, v]) => ({ midi, notes: v.n, acc: v.ok / v.n, cents: mean(v.c) }))
   const byPitch = [...withMid].sort((a, b) => b.n.midi - a.n.midi)
   const high = byPitch.slice(0, Math.max(3, Math.round(withMid.length * 0.25)))
@@ -781,6 +796,7 @@ export function buildReport(inp: ReportInput): Report {
     phrases: phraseScores,
     rows,
     range,
+    pitchStats,
     notesInRange: na.length,
     notesSung: sungNA.length,
     comparedWithOriginal: hasOrig,
