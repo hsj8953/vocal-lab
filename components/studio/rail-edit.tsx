@@ -1,12 +1,12 @@
 'use client'
 
-import { ArrowDown, ArrowUp, Download, ListChecks, Merge, MousePointer2, Plus, Redo2, Scissors, Trash2, Undo2, Wand2 } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { ArrowDown, ArrowUp, Download, Headphones, ListChecks, Square, Merge, MousePointer2, Plus, Redo2, Scissors, Trash2, Undo2, Wand2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { checkNotes, type CheckItem, type CheckKind } from '@/lib/note-check'
 import { fmtTime, noteName } from '@/lib/music'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { foldCurveToNotes, realOrigCurve, realVocalEnvelope } from '@/lib/engine'
+import { compareListen, foldCurveToNotes, realOrigCurve, realVocalEnvelope } from '@/lib/engine'
 import { useStudio } from './studio-provider'
 import { Kbd, Section, Seg } from './ui-bits'
 
@@ -23,9 +23,15 @@ export function RailEdit() {
           value={s.tool}
           onChange={(v) => a.setTool(v)}
           options={[
-            { value: 'select', label: <Tool icon={<MousePointer2 />} text="선택" k="V" /> },
+            {
+              value: 'select',
+              label: <Tool icon={<MousePointer2 />} text="선택" k="V" />,
+            },
             { value: 'add', label: <Tool icon={<Plus />} text="추가" k="A" /> },
-            { value: 'cut', label: <Tool icon={<Scissors />} text="자르기" k="C" /> },
+            {
+              value: 'cut',
+              label: <Tool icon={<Scissors />} text="자르기" k="C" />,
+            },
           ]}
         />
         <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
@@ -168,10 +174,26 @@ function OrigLineSection() {
 /* ------------------------------------------------------------------ */
 
 const KIND: Record<CheckKind, { label: string; color: string; help: string }> = {
-  missing: { label: '빠진 곳', color: 'text-caution', help: '원곡 보컬은 부르는데 노트가 없어요' },
-  pitch: { label: '음 다름', color: 'text-miss', help: '노트 음이 원곡 보컬과 1반음 넘게 달라요' },
-  novoice: { label: '소리 없음', color: 'text-muted-foreground', help: '그 시간에 원곡 보컬 소리가 거의 없어요 (숨소리·잡음·코러스일 가능성)' },
-  short: { label: '너무 짧음', color: 'text-muted-foreground', help: '0.07초보다 짧은 조각 노트예요' },
+  missing: {
+    label: '빠진 곳',
+    color: 'text-caution',
+    help: '원곡 보컬은 부르는데 노트가 없어요',
+  },
+  pitch: {
+    label: '음 다름',
+    color: 'text-miss',
+    help: "노트 음이 원곡 보컬과 1반음 넘게 달라요. '거의 확실'은 선이 노트 내내 다른 음에 있는 곳이라 고칠 가능성이 높고, '애매'는 꺾기·비브라토·화음일 수 있어요. '비교 듣기'로 들어 보고 고치세요.",
+  },
+  novoice: {
+    label: '소리 없음',
+    color: 'text-muted-foreground',
+    help: '그 시간에 원곡 보컬 소리가 거의 없어요 (숨소리·잡음·코러스일 가능성)',
+  },
+  short: {
+    label: '너무 짧음',
+    color: 'text-muted-foreground',
+    help: '0.07초보다 짧은 조각 노트예요',
+  },
 }
 
 function NoteCheckSection() {
@@ -204,10 +226,28 @@ function NoteCheckSection() {
   const nm = (m: number) => noteName(m + sh, s.notation)
   const missing = items.filter((i) => i.kind === 'missing')
   const fromVocal = !!s.inputs.vocal || !!s.analysis.info?.separated
+  // 비교 듣기: 어느 항목을 듣는 중인지, 지금 단계 (0 원곡 보컬, 1 지금 노트, 2 제안 음)
+  const [cmp, setCmp] = useState<{ key: string; step: number } | null>(null)
+  const stopRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => stopRef.current?.(), [])
+  const listen = (it: CheckItem, key: string) => {
+    stopRef.current?.()
+    if (cmp?.key === key) return
+    a.pause()
+    stopRef.current = compareListen(it.start, it.end, it.midi!, it.suggest!, (step) => {
+      if (step < 0) {
+        setCmp((c) => (c?.key === key ? null : c))
+        if (stopRef.current) stopRef.current = null
+      } else setCmp({ key, step })
+    })
+    setCmp({ key, step: 0 })
+  }
+  const pitchHigh = items.filter((i) => i.kind === 'pitch' && i.conf === 'high').length
   return (
     <Section title="노트 점검" hint={items.length ? `${items.length}곳` : '문제 없음'}>
       <p className="text-xs leading-relaxed text-muted-foreground">
-        흰 선(원곡 보컬)과 노트를 비교해서 틀렸을 가능성이 높은 곳을 찾아요. 피아노 롤에는 빠진 곳이 <span className="text-caution">주황 상자</span>, 의심 노트가 <span className="text-caution">점선 테두리</span>로 보여요.
+        흰 선(원곡 보컬)과 노트를 비교해서 틀렸을 가능성이 높은 곳을 찾아요. 피아노 롤에는 빠진 곳이 <span className="text-caution">주황 상자</span>, 의심 노트가{' '}
+        <span className="text-caution">점선 테두리</span>로 보여요.
       </p>
       <div className="mt-2.5 flex flex-wrap gap-1">
         {(['all', 'missing', 'pitch', 'novoice', 'short'] as const).map((k) => {
@@ -226,10 +266,16 @@ function NoteCheckSection() {
         })}
       </div>
       {filter !== 'all' ? <p className="mt-1.5 text-[11px] text-muted-foreground">{KIND[filter].help}</p> : null}
+      {count('pitch') ? (
+        <p className="mt-1.5 text-[11px] text-muted-foreground">
+          음 다름 {count('pitch')}개 중 <b className="text-miss">거의 확실 {pitchHigh}개</b>부터 확인해 보세요.
+        </p>
+      ) : null}
 
       {!fromVocal ? (
         <p className="mt-2.5 rounded-lg bg-caution/10 p-2.5 text-[11px] leading-relaxed text-caution">
-          보컬 파일이나 AI 분리 없이 원곡에서 잰 선이라 반주 소리 때문에 <b>맞는 노트도 틀렸다고 나오는 경우가 많아요</b> (시험해 보니 의심 노트의 70~80%가 사실 맞았어요). 보컬 파일을 넣거나 AI 분리를 켜고 다시 분석한 뒤 점검하는 걸 추천해요. 아래 목록은 참고만 하세요.
+          보컬 파일이나 AI 분리 없이 원곡에서 잰 선이라 반주 소리 때문에 <b>맞는 노트도 틀렸다고 나오는 경우가 많아요</b> (시험해 보니 의심 노트의 70~80%가 사실 맞았어요). 보컬 파일을 넣거나 AI 분리를
+          켜고 다시 분석한 뒤 점검하는 걸 추천해요. 아래 목록은 참고만 하세요.
         </p>
       ) : null}
       {fromVocal && missing.length > 1 ? (
@@ -240,30 +286,59 @@ function NoteCheckSection() {
 
       {shown.length ? (
         <ul className="scroll-thin mt-2.5 max-h-72 divide-y divide-border overflow-y-auto rounded-lg border border-border">
-          {shown.map((it, idx) => (
-            <li key={`${it.kind}-${it.start}-${idx}`} className="flex items-center gap-2 px-2 py-1.5 text-xs">
-              <button type="button" onClick={() => go(it)} className="font-mono text-voice tabular hover:underline" title="그 위치로 이동">
-                {fmtTime(it.start, 1)}
-              </button>
-              <span className={`shrink-0 font-medium ${KIND[it.kind].color}`}>{KIND[it.kind].label}</span>
-              <span className="min-w-0 flex-1 break-words text-muted-foreground">
-                {it.kind === 'missing' ? `${(it.end - it.start).toFixed(1)}초 · ${nm(it.suggest!)} 근처` : it.kind === 'pitch' ? `${nm(it.midi!)} → ${nm(it.suggest!)}` : nm(it.midi!)}
-              </span>
-              {it.kind === 'missing' ? (
-                <Button size="xs" variant="secondary" onClick={() => a.fillGaps([it])}>
-                  채우기
-                </Button>
-              ) : it.kind === 'pitch' ? (
-                <Button size="xs" variant="secondary" onClick={() => a.setNotePitches([{ id: it.noteId!, midi: it.suggest! }])}>
-                  음 고치기
-                </Button>
-              ) : (
-                <Button size="xs" variant="ghost" onClick={() => a.deleteNotes([it.noteId!])} aria-label="지우기">
-                  <Trash2 />
-                </Button>
-              )}
-            </li>
-          ))}
+          {shown.map((it, idx) => {
+            const key = `${it.kind}-${it.start}-${idx}`
+            const playing = cmp?.key === key ? cmp.step : -1
+            return (
+              <li key={key} className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5 text-xs">
+                <button type="button" onClick={() => go(it)} className="font-mono text-voice tabular hover:underline" title="그 위치로 이동">
+                  {fmtTime(it.start, 1)}
+                </button>
+                <span className={`shrink-0 font-medium ${KIND[it.kind].color}`}>{KIND[it.kind].label}</span>
+                {it.kind === 'pitch' ? (
+                  <span
+                    className={`shrink-0 rounded px-1 py-px text-[10px] font-semibold ${it.conf === 'high' ? 'bg-miss/15 text-miss' : 'bg-muted text-muted-foreground'}`}
+                    title={it.conf === 'high' ? '선이 노트 내내 다른 음에 평평하게 있어요. 노트가 틀렸을 가능성이 높아요.' : '선이 잠깐 휘거나 흔들려요. 꺾기·비브라토·화음일 수 있어요.'}
+                  >
+                    {it.conf === 'high' ? '거의 확실' : '애매'}
+                  </span>
+                ) : null}
+                <span className="flex-1 whitespace-nowrap text-muted-foreground">
+                  {it.kind === 'missing' ? `${(it.end - it.start).toFixed(1)}초 · ${nm(it.suggest!)} 근처` : it.kind === 'pitch' ? `${nm(it.midi!)} → ${nm(it.suggest!)}` : nm(it.midi!)}
+                </span>
+                <div className="ml-auto flex shrink-0 gap-1">
+                  {it.kind === 'pitch' ? (
+                    <Button size="xs" variant={playing >= 0 ? 'default' : 'outline'} onClick={() => listen(it, key)} aria-label={playing >= 0 ? '비교 듣기 멈춤' : '비교 듣기'}>
+                      {playing >= 0 ? <Square /> : <Headphones />} {playing >= 0 ? '멈춤' : '비교 듣기'}
+                    </Button>
+                  ) : null}
+                  {it.kind === 'missing' ? (
+                    <Button size="xs" variant="secondary" onClick={() => a.fillGaps([it])}>
+                      채우기
+                    </Button>
+                  ) : it.kind === 'pitch' ? (
+                    <Button size="xs" variant="secondary" onClick={() => a.setNotePitches([{ id: it.noteId!, midi: it.suggest! }])}>
+                      음 고치기
+                    </Button>
+                  ) : (
+                    <Button size="xs" variant="ghost" onClick={() => a.deleteNotes([it.noteId!])} aria-label="지우기">
+                      <Trash2 />
+                    </Button>
+                  )}
+                </div>
+                {playing >= 0 ? (
+                  <p className="w-full text-[11px] text-muted-foreground" aria-live="polite">
+                    {(['원곡 보컬', `지금 노트 ${nm(it.midi!)}`, `제안 음 ${nm(it.suggest!)}`] as const).map((lb, i) => (
+                      <span key={lb}>
+                        {i ? ' → ' : ''}
+                        <span className={i === playing ? 'font-semibold text-voice' : ''}>{lb}</span>
+                      </span>
+                    ))}
+                  </p>
+                ) : null}
+              </li>
+            )
+          })}
         </ul>
       ) : (
         <p className="mt-2.5 flex items-center gap-1.5 text-xs text-voice">
@@ -271,7 +346,8 @@ function NoteCheckSection() {
         </p>
       )}
       <p className="mt-2 text-[11px] text-muted-foreground">
-        시간을 누르면 그 위치로 가요. 고친 건 되돌리기(Ctrl+Z)로 취소할 수 있어요. 흰 선이 틀린 곳(코러스·애드리브를 잡은 곳)도 있으니 들어 보고 고쳐 주세요. 곡 전체가 살짝 높게/낮게 불린 만큼은 틀린 걸로 치지 않아요.
+        시간을 누르면 그 위치로 가요. 고친 건 되돌리기(Ctrl+Z)로 취소할 수 있어요. 흰 선이 틀린 곳(코러스·애드리브를 잡은 곳)도 있으니 들어 보고 고쳐 주세요. 곡 전체가 살짝 높게/낮게 불린 만큼은 틀린
+        걸로 치지 않아요.
       </p>
     </Section>
   )

@@ -1783,6 +1783,74 @@ export const realLevelInfo = (): { orig: number; mr: number } | null => real.lev
 export const audioContext = (): AudioContext => real.audioCtx()
 export const realHasGuideVocal = (): boolean => real.hasGuideVocal()
 export const realSeparatedWav = (kind: 'vocal' | 'inst'): Promise<Blob | null> => real.separatedWav(kind)
+/**
+ * 노트 비교 듣기: 원곡 보컬 구간 → 지금 노트 음 → 제안 음 (피아노 비슷한 소리) 차례로.
+ * onStep(0|1|2)로 지금 뭐가 나오는지, 끝나면 onStep(-1). 돌려주는 함수로 멈춤.
+ */
+export function compareListen(t0: number, t1: number, midiA: number, midiB: number, onStep: (i: number) => void): () => void {
+  const ctx = real.audioCtx() as AudioContext
+  void ctx.resume()
+  const seg = real.vocalSegment(Math.max(0, t0 - 0.12), t1 + 0.12) as { buf: AudioBuffer } | null
+  const out = ctx.createGain()
+  out.gain.value = 0.9
+  out.connect(ctx.destination)
+  const t = ctx.currentTime + 0.05
+  const vDur = seg ? Math.min(3.5, seg.buf.duration) : 0
+  const nodes: AudioScheduledSourceNode[] = []
+  if (seg) {
+    const s = ctx.createBufferSource()
+    s.buffer = seg.buf
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0, t)
+    g.gain.linearRampToValueAtTime(1, t + 0.02)
+    g.gain.setValueAtTime(1, t + vDur - 0.04)
+    g.gain.linearRampToValueAtTime(0, t + vDur)
+    s.connect(g).connect(out)
+    s.start(t, 0, vDur)
+    nodes.push(s)
+  }
+  const tone = (midi: number, at: number, dur: number) => {
+    const f = 440 * Math.pow(2, (midi - 69) / 12)
+    for (const [k, amp] of [
+      [1, 0.32],
+      [2, 0.12],
+      [3, 0.05],
+      [4, 0.025],
+    ] as const) {
+      const o = ctx.createOscillator()
+      o.frequency.value = f * k
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0, at)
+      g.gain.linearRampToValueAtTime(amp, at + 0.008)
+      g.gain.exponentialRampToValueAtTime(amp * 0.35, at + 0.35)
+      g.gain.exponentialRampToValueAtTime(0.0001, at + dur)
+      o.connect(g).connect(out)
+      o.start(at)
+      o.stop(at + dur + 0.02)
+      nodes.push(o)
+    }
+  }
+  const tA = t + vDur + 0.35
+  const tB = tA + 1.15
+  tone(midiA, tA, 0.95)
+  tone(midiB, tB, 0.95)
+  const end = tB + 1.0
+  const timers = [0, tA, tB, end].map((at, i) => setTimeout(() => onStep(i === 3 ? -1 : i), Math.max(0, (at - ctx.currentTime) * 1000)))
+  let stopped = false
+  return () => {
+    if (stopped) return
+    stopped = true
+    timers.forEach(clearTimeout)
+    for (const n of nodes) {
+      try {
+        n.stop()
+      } catch {}
+    }
+    setTimeout(() => out.disconnect(), 50)
+    onStep(-1)
+  }
+}
+
 /** 보컬 소리 크기 곡선 (10ms마다 dB) — 보컬 파일이나 AI 분리가 없으면 null */
 export const realVocalEnvelope = (): { t0: number; hop: number; db: Float32Array } | null => real.vocalEnvelope()
 /** AI 분리 설정 (그래픽카드 강제 시도) */

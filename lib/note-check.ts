@@ -28,6 +28,10 @@ export interface CheckItem {
   midi?: number
   /** 선이 말하는 음 (원곡 키, 반올림) */
   suggest?: number
+  /** 음 다름의 확실도 — high: 선이 노트 내내 다른 음에 평평하게 있음, low: 잠깐 휘거나 흔들림·화음일 수도 */
+  conf?: 'high' | 'low'
+  /** 판단 근거 (점검용) */
+  feat?: { steady: number; halves: boolean; cover: number; diff: number }
 }
 
 const median = (a: number[]) => {
@@ -137,7 +141,22 @@ export function checkNotes(c: Curve, notes: NoteLike[], env?: Envelope | null): 
     for (let k = lo; k <= hi; k++) if (Number.isFinite(c.midi[k])) mid.push(c.midi[k])
     if (mid.length >= 5) {
       const m = median(mid) - tune
-      if (Math.abs(m - n.midi) >= 0.9) out.push({ kind: 'pitch', start: n.start, end: n.start + n.dur, noteId: n.id, midi: n.midi, suggest: Math.round(m) })
+      if (Math.abs(m - n.midi) >= 0.9) {
+        const sg = Math.round(m)
+        const dir = Math.sign(m - n.midi)
+        // 1) 선이 제안 음 근처(±0.5)에 머문 비율
+        const steady = mid.filter((v) => Math.abs(v - tune - m) <= 0.5).length / mid.length
+        // 2) 노트 앞쪽 절반·뒤쪽 절반 모두 같은 쪽으로 다른가 (잠깐 휜 게 아니라 내내 다른가)
+        const h = mid.length >> 1
+        const m1 = median(mid.slice(0, h)) - tune
+        const m2 = median(mid.slice(h)) - tune
+        const halves = Math.sign(m1 - n.midi) === dir && Math.sign(m2 - n.midi) === dir && Math.abs(m1 - n.midi) >= 0.7 && Math.abs(m2 - n.midi) >= 0.7
+        // 3) 노트 가운데에서 선이 잡힌 비율
+        const cover = mid.length / Math.max(1, hi - lo + 1)
+        const diff = Math.abs(m - n.midi)
+        const conf: 'high' | 'low' = steady >= 0.6 && halves && cover >= 0.6 ? 'high' : 'low'
+        out.push({ kind: 'pitch', start: n.start, end: n.start + n.dur, noteId: n.id, midi: n.midi, suggest: sg, conf, feat: { steady, halves, cover, diff } })
+      }
     }
   }
   return out.sort((x, y) => x.start - y.start)
