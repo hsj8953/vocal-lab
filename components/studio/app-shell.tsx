@@ -15,6 +15,8 @@ import { RailKey } from './rail-key'
 import { ResultView } from './result-view'
 import { StageCanvas } from './stage-canvas'
 import { lineAt } from '@/lib/lrc'
+import { partAt, WHO_LABEL } from '@/lib/duet'
+import { DUET_COLOR } from './canvas-utils'
 import { useStudio } from './studio-provider'
 import type { RailTab, View } from './studio-types'
 import { Transport } from './transport'
@@ -244,11 +246,20 @@ function ResumeLyrics() {
   }
   if (cur < 0) return null
   const wait = lines[cur].t - t
+  const whoOf = (k: number) => (s.duet.on && s.duet.parts.length ? partAt(s.duet.parts, lines[k].t + ly.offset + 0.3) : null)
   const line = (k: number, big: boolean) => {
     const l = lines[k]
+    const who = whoOf(k)
     return (
       <div className={big ? '' : 'opacity-60'}>
-        <p className={big ? 'text-2xl font-bold text-balance' : 'text-base font-medium text-balance'}>{l.reading || l.text}</p>
+        {who ? (
+          <span className="mb-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold text-background" style={{ background: DUET_COLOR[who] }}>
+            {WHO_LABEL[who]}
+          </span>
+        ) : null}
+        <p className={big ? 'text-2xl font-bold text-balance' : 'text-base font-medium text-balance'} style={who ? { color: DUET_COLOR[who] } : undefined}>
+          {l.reading || l.text}
+        </p>
         {l.reading && l.text !== l.reading ? <p className={big ? 'text-sm text-muted-foreground' : 'text-xs text-muted-foreground'}>{l.text}</p> : null}
       </div>
     )
