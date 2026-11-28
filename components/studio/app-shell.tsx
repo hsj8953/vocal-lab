@@ -238,7 +238,7 @@ function PracticeOverlay() {
       ) : (
         <>
           <p className="text-sm font-medium">반주가 나오면 따라 불러 주세요</p>
-          <p className="text-xs text-muted-foreground">이어폰을 끼면 더 정확해요 · 곡이 끝나면 결과가 자동으로 나와요</p>
+          <p className="text-xs text-muted-foreground">이어폰을 끼면 더 정확해요</p>
         </>
       )}
       <Button size="sm" variant="ghost" onClick={a.cancelPractice}>

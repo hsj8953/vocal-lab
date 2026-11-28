@@ -98,16 +98,17 @@ export function createActions(env: ActionEnv) {
     }
     if (sRef.current.measure.step !== 'idle') return
     const pr = sRef.current.practice
-    // 연습 중에 멈췄다가 다시 재생: 3초 세고 멈춘 자리에서 이어 부르기
-    if (pr.phase === 'running' && !resuming) return resumeCountdown()
+    // 연습 중에 사용자가 일시정지했다가 다시 재생: 3초 세고 멈춘 자리에서 이어 부르기
+    // (재생 위치를 끌어서 옮길 때처럼 잠깐 멈췄다 바로 이어지는 건 카운트다운 없이)
+    if (pr.phase === 'running' && practiceHeld) return resumeCountdown()
     if (pr.phase === 'countdown') return
-    resuming = false
     await p.play()
     live.playing = true
     set({ playing: true })
     if (sRef.current.practice.phase === 'running') beginTake()
   }
-  let resuming = false
+  /** 연습 중 사용자가 직접 일시정지했는가 */
+  let practiceHeld = false
   const resumeCountdown = () => {
     const pr = { ...sRef.current.practice, phase: 'countdown' as const, count: 3, resume: true }
     sRef.current = { ...sRef.current, practice: pr }
@@ -125,7 +126,7 @@ export function createActions(env: ActionEnv) {
       const run = { ...cur, phase: 'running' as const, count: 0, resume: false }
       sRef.current = { ...sRef.current, practice: run }
       set({ practice: run })
-      resuming = true
+      practiceHeld = false
       void play()
     }, 1000)
   }
@@ -135,7 +136,12 @@ export function createActions(env: ActionEnv) {
     live.playing = false
     set({ playing: false })
   }
-  const togglePlay = () => (sRef.current.playing ? pause() : void play())
+  const togglePlay = () => {
+    if (sRef.current.playing) {
+      if (sRef.current.practice.phase === 'running') practiceHeld = true
+      pause()
+    } else void play()
+  }
   const skip = (d: number) => seek((playerRef.current?.getTime() ?? 0) + d)
 
   /* ------------------------------ 마이크 ------------------------------ */
@@ -265,6 +271,7 @@ export function createActions(env: ActionEnv) {
     if (st.measure.step !== 'idle') return
     if (!st.notes.length) return notify('노트가 없어서 연습을 시작할 수 없어요.')
     pause()
+    practiceHeld = false
     if (st.view !== 'studio') set({ view: 'studio' })
     if (live.replay) stopReplay()
     if (!sRef.current.mic.on && !(await startMicNow())) return
@@ -277,17 +284,12 @@ export function createActions(env: ActionEnv) {
     playerRef.current?.loadTakeLayers(null)
     const { t0, t1 } = practiceRange()
     seek(t0)
-    set({ loop: null, takeAvailable: false, practice: { phase: 'countdown', count: 3, t0, t1 } })
+    // 시작할 땐 카운트다운 없이 바로 (첫 노트 4초 전부터 반주가 나온다). 카운트다운은 멈췄다 이어 부를 때만
+    const run = { phase: 'running' as const, count: 0, t0, t1 }
+    sRef.current = { ...sRef.current, loop: null, practice: run }
+    set({ loop: null, takeAvailable: false, practice: run })
     clearInterval(countTimer)
-    countTimer = setInterval(() => {
-      const pr = sRef.current.practice
-      if (pr.phase !== 'countdown') return clearInterval(countTimer)
-      if (pr.count > 1) return set({ practice: { ...pr, count: pr.count - 1 } })
-      clearInterval(countTimer)
-      set({ practice: { ...pr, phase: 'running', count: 0 } })
-      sRef.current = { ...sRef.current, practice: { ...pr, phase: 'running', count: 0 } }
-      void play()
-    }, 1000)
+    void play()
   }
 
   const cancelPractice = () => {
@@ -308,6 +310,7 @@ export function createActions(env: ActionEnv) {
     if (st.practice.phase === 'idle') return
     if (st.practice.phase === 'countdown' && !st.practice.resume) return cancelPractice()
     clearInterval(countTimer)
+    practiceHeld = false
     // 화면 갱신 전에 다시 불려도 한 번만 처리되도록 바로 표시
     sRef.current = { ...st, practice: { phase: 'idle', count: 0, t0: 0, t1: 0 } }
     pause()
