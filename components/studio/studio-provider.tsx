@@ -407,6 +407,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       get player() {
         return playerRef.current
       },
+      get actions() {
+        return a
+      },
     }
   }, [])
 

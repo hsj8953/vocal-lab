@@ -13,6 +13,7 @@ import { RailEdit } from './rail-edit'
 import { RailKey } from './rail-key'
 import { ResultView } from './result-view'
 import { StageCanvas } from './stage-canvas'
+import { lineAt } from '@/lib/lrc'
 import { useStudio } from './studio-provider'
 import type { RailTab, View } from './studio-types'
 import { Transport } from './transport'
@@ -221,6 +222,49 @@ function StudioView() {
   )
 }
 
+/** 이어 부르기 카운트다운에서 지금 줄과 다음 줄 가사를 보여 준다 */
+function ResumeLyrics() {
+  const { s, live } = useStudio()
+  const ly = s.lyrics
+  if (!ly?.lines.length) return null
+  const t = live.time - ly.offset
+  const lines = ly.lines
+  const has = (i: number) => i >= 0 && i < lines.length && !!(lines[i].reading || lines[i].text)
+  const i = lineAt(lines, t)
+  // 지금 줄이 비었으면(간주) 다음에 나올 가사 줄을 찾는다
+  let cur = has(i) ? i : -1
+  let nx = (cur >= 0 ? cur : i) + 1
+  while (nx < lines.length && !has(nx)) nx++
+  if (cur < 0 && nx < lines.length) {
+    cur = nx
+    nx++
+    while (nx < lines.length && !has(nx)) nx++
+  }
+  if (cur < 0) return null
+  const wait = lines[cur].t - t
+  const line = (k: number, big: boolean) => {
+    const l = lines[k]
+    return (
+      <div className={big ? '' : 'opacity-60'}>
+        <p className={big ? 'text-2xl font-bold text-balance' : 'text-base font-medium text-balance'}>{l.reading || l.text}</p>
+        {l.reading && l.text !== l.reading ? <p className={big ? 'text-sm text-muted-foreground' : 'text-xs text-muted-foreground'}>{l.text}</p> : null}
+      </div>
+    )
+  }
+  return (
+    <div className="mt-2 max-w-2xl space-y-3 rounded-xl bg-background/60 px-6 py-4 text-center" aria-label="이어서 부를 가사">
+      <p className="text-[11px] text-muted-foreground">{wait > 0.3 ? `${wait.toFixed(1)}초 뒤에 시작하는 가사` : '지금 부를 가사'}</p>
+      {line(cur, true)}
+      {nx < lines.length ? (
+        <div>
+          <p className="mb-0.5 text-[10px] text-muted-foreground">다음 줄</p>
+          {line(nx, false)}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 /** 연습 시작 카운트다운 */
 function PracticeOverlay() {
   const { s, a } = useStudio()
@@ -233,7 +277,7 @@ function PracticeOverlay() {
       {s.practice.resume ? (
         <>
           <p className="text-sm font-medium">멈춘 곳부터 이어서 불러요</p>
-          <p className="text-xs text-muted-foreground">녹음은 끊긴 곳부터 이어 붙여져요</p>
+          <ResumeLyrics />
         </>
       ) : (
         <>
