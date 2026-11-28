@@ -918,6 +918,11 @@ export interface Player {
   loadGuide: (buf: AudioBuffer | null) => void
   /** 가이드 보컬 볼륨 0~1 */
   setGuideVolume: (v: number) => void
+  /** 듀엣: 가이드 보컬·내 녹음을 파트에 따라 줄이기 (0~1, 부드럽게) */
+  setGuideDuck: (f: number) => void
+  setTakeDuck: (f: number) => void
+  /** 저장용: 배속을 반영한 가이드 보컬 버퍼 */
+  getGuidePlayback: () => Promise<AudioBuffer | null>
   /** 오디오 컨텍스트 (싱크 측정용) */
   audioContext: () => AudioContext
   /** 녹음한 내 목소리 레이어들 (원래 목소리, 튜닝, 화음, 더블링 …). null이면 끔 */
@@ -1028,6 +1033,8 @@ export function createPlayer(): Player {
   }
   let takeGain: GainNode | null = null
   let takeVol = 0
+  let guideDuck = 1
+  let takeDuck = 1
   let chain: { input: AudioNode; output: AudioNode } | null = null
   const wireChain = () => {
     if (!takeBus || !takeGain) return
@@ -1059,7 +1066,7 @@ export function createPlayer(): Player {
       mainIn = ctx.createGain()
       mainIn.connect(gain)
       guideGain = ctx.createGain()
-      guideGain.gain.value = guideVol * guideVol
+      guideGain.gain.value = guideVol * guideVol * guideDuck
       guideGain.connect(mainIn)
       const c0 = ctx
       stretchReady = Promise.race([
@@ -1080,7 +1087,7 @@ export function createPlayer(): Player {
         })
       // 내 목소리는 반주 볼륨과 따로 조절한다
       takeGain = ctx.createGain()
-      takeGain.gain.value = takeVol * takeVol
+      takeGain.gain.value = takeVol * takeVol * takeDuck
       takeGain.connect(mixBus)
       takeBus = ctx.createGain()
       wireChain()
@@ -1234,7 +1241,20 @@ export function createPlayer(): Player {
     },
     setGuideVolume(v) {
       guideVol = v
-      if (guideGain) guideGain.gain.value = v * v
+      if (guideGain && ctx) guideGain.gain.setTargetAtTime(v * v * guideDuck, ctx.currentTime, 0.015)
+    },
+    setGuideDuck(f) {
+      if (Math.abs(f - guideDuck) < 1e-3) return
+      guideDuck = f
+      if (guideGain && ctx) guideGain.gain.setTargetAtTime(guideVol * guideVol * f, ctx.currentTime, 0.03)
+    },
+    setTakeDuck(f) {
+      if (Math.abs(f - takeDuck) < 1e-3) return
+      takeDuck = f
+      if (takeGain && ctx) takeGain.gain.setTargetAtTime(takeVol * takeVol * f, ctx.currentTime, 0.03)
+    },
+    async getGuidePlayback() {
+      return guideBuf ? await compensate(guideBuf, speed) : null
     },
     audioContext: () => ensure(),
     loadTakeLayers(next) {
@@ -1313,7 +1333,7 @@ export function createPlayer(): Player {
     },
     setTakeVolume(v) {
       takeVol = v
-      if (takeGain) takeGain.gain.value = v * v
+      if (takeGain) takeGain.gain.value = v * v * takeDuck
     },
     outputLatencyMs() {
       const c = ensure()

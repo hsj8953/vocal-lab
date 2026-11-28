@@ -34,6 +34,7 @@ import { fmtSigned, fmtTime, noteName } from '@/lib/music'
 import { cn } from '@/lib/utils'
 import { FX_PRESETS, levelOfTune, tuneFromLevel, type FxParams } from '@/lib/vocal-fx'
 import { listTakes, type TakeMeta } from '@/lib/takes'
+import { myNotes } from '@/lib/duet'
 import { MASTER_PRESETS, masterInfo, type MasterPreset } from '@/lib/mastering'
 import { analyzeRange, mergeStats, type EdgeAdvice } from '@/lib/range-advice'
 import { ConfirmButton } from './confirm-button'
@@ -60,7 +61,7 @@ export function ResultView() {
     () =>
       buildReport({
         session: ss,
-        notes: s.notes,
+        notes: myNotes(s.notes, s.duet),
         shift: d.shift,
         userRange: s.userRange,
         origAt: s.project.real ? engine.realOrigPitchAt : undefined,
@@ -69,7 +70,7 @@ export function ResultView() {
       }),
     // 기록이 바뀔 때만 다시 계산
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ss, s.notes, s.practiceSpan, d.shift],
+    [ss, s.notes, s.practiceSpan, d.shift, s.duet],
   )
 
   const key = songKey(s.project.title, s.project.duration)

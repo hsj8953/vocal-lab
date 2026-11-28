@@ -1,5 +1,6 @@
 import type { TuneSpot } from '@/lib/vocal-fx'
 import type { MasterPreset } from '@/lib/mastering'
+import type { DuetState } from '@/lib/duet'
 import * as engine from '@/lib/engine'
 import type { AlignResult, Compare, CrepeModel, Note, OctaveMode, PitchModel, RealInfo, SessionStats, Tier, UserRange } from '@/lib/engine'
 import type { Notation } from '@/lib/music'
@@ -167,6 +168,8 @@ export interface StudioState {
   tuneSpots: TuneSpot[]
   /** 마스터링 */
   master: MasterState
+  /** 듀엣 모드 */
+  duet: DuetState
   /** 효과 계산 중 (0~1), 아니면 null */
   fxBusy: number | null
   /** 저장 중 */
@@ -220,6 +223,8 @@ export interface Live {
   shift: number
   userRange: UserRange
   selection: Set<string>
+  /** 듀엣: 지금 파트 */
+  duetWho: 'orig' | 'me' | 'both' | null
   notation: Notation
   edit: boolean
   tool: Tool
@@ -321,6 +326,7 @@ export function createInitialState(): StudioState {
     fxPreset: 'raw',
     fxCompare: 'tuned',
     tuneSpots: [],
+    duet: { on: false, style: 'section', parts: [] },
     master: { preset: 'off', gainDb: 0, before: null, after: null, busy: false, compare: 'after', matched: true },
     fxBusy: null,
     exporting: false,
@@ -347,6 +353,7 @@ export function createLive(): Live {
     shift: 0,
     userRange: { low: 48, high: 69 },
     selection: new Set(),
+    duetWho: null,
     notation: 'scientific',
     edit: false,
     tool: 'select',

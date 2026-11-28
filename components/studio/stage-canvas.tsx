@@ -2,9 +2,10 @@
 
 import { useEffect, useRef } from 'react'
 import * as engine from '@/lib/engine'
+import { partAt } from '@/lib/duet'
 import type { Note, Tier } from '@/lib/engine'
 import { clamp, isBlackKey, laneLabel, noteName } from '@/lib/music'
-import { PAL, SANS, TIER_COLOR, fitCanvas, monoFamily, pill } from './canvas-utils'
+import { DUET_COLOR, PAL, SANS, TIER_COLOR, fitCanvas, monoFamily, pill } from './canvas-utils'
 import { useFrame, useStudio } from './studio-provider'
 
 const GUTTER = 56
@@ -41,6 +42,10 @@ export function StageCanvas() {
   const view = useRef({ windowSec: 9, lo: 44, hi: 74, ready: false, lock: false, mono: '' })
   const geo = useRef<Geo>({ w: 0, h: 0, headX: 0, pxs: 100, rowH: 12, hiV: 74.5, noteH: 10 })
   const drag = useRef<Drag | null>(null)
+  const duetRef = useRef(s.duet)
+  duetRef.current = s.duet
+  const practiceRef = useRef(s.practice.phase)
+  practiceRef.current = s.practice.phase
   const hover = useRef<{ x: number; y: number } | null>(null)
 
   useFrame(() => {
@@ -149,6 +154,21 @@ export function StageCanvas() {
     ctx.rect(GUTTER, 0, w - GUTTER, h)
     ctx.clip()
 
+    /* 듀엣 파트: 배경을 파트 색으로 옅게, 아래쪽에 파트 띠 */
+    const duet = duetRef.current
+    const duetOn = duet.on && duet.parts.length > 0
+    if (duetOn) {
+      for (const pt of duet.parts) {
+        const px0 = Math.max(GUTTER, x(pt.t0))
+        const px1 = Math.min(w, x(pt.t1))
+        if (px1 <= px0) continue
+        ctx.globalAlpha = pt.who === 'me' ? 0.07 : 0.1
+        ctx.fillStyle = DUET_COLOR[pt.who]
+        ctx.fillRect(px0, TOP - 6, px1 - px0, h - TOP - BOTTOM + 6)
+        ctx.globalAlpha = 1
+      }
+    }
+
     /* 마디선 */
     const barSec = bpmRef.current > 0 ? 240 / bpmRef.current : 5
     const tL = t - (headX - GUTTER) / pxs
@@ -203,7 +223,10 @@ export function StageCanvas() {
       const sc = live.noteScore.get(n.id)
 
       let fill: string = outside ? PAL.missTint : PAL.ice
-      if (isPast) {
+      const who = duetOn ? partAt(duet.parts, n.start + n.dur / 2) : null
+      if (who === 'orig') fill = DUET_COLOR.orig
+      else if (who === 'both') fill = DUET_COLOR.both
+      if (isPast && who !== 'orig') {
         if (sc) {
           const tier: Tier = sc[0] >= sc[1] + sc[2] ? 'great' : sc[2] > sc[1] ? 'off' : 'ok'
           fill = TIER_COLOR[tier]
@@ -214,7 +237,7 @@ export function StageCanvas() {
         ctx.shadowColor = outside ? PAL.miss : 'oklch(0.93 0.02 235 / 0.9)'
         ctx.shadowBlur = 16
       }
-      ctx.globalAlpha = isPast ? (sc ? 0.7 : 1) : 1
+      ctx.globalAlpha = who === 'orig' ? 0.55 : isPast ? (sc ? 0.7 : 1) : 1
       ctx.fillStyle = fill
       pill(ctx, x1, yc - noteH / 2, Math.max(nw, 4), noteH)
       ctx.fill()
@@ -305,6 +328,28 @@ export function StageCanvas() {
       ctx.fill()
       ctx.globalAlpha = 1
     }
+    /* 듀엣 파트 띠 (맨 아래) — 누르면 파트가 바뀐다 */
+    if (duetOn) {
+      ctx.font = `700 10px ${SANS}`
+      ctx.textBaseline = 'middle'
+      const by = h - BOTTOM + 1
+      const bh = BOTTOM - 3
+      for (const pt of duet.parts) {
+        const px0 = Math.max(GUTTER, x(pt.t0))
+        const px1 = Math.min(w, x(pt.t1))
+        if (px1 <= px0) continue
+        ctx.fillStyle = DUET_COLOR[pt.who]
+        ctx.globalAlpha = 0.85
+        ctx.fillRect(px0 + 1, by, Math.max(1, px1 - px0 - 2), bh)
+        ctx.globalAlpha = 1
+        const label = pt.who === 'me' ? '나' : pt.who === 'orig' ? '원곡 가수' : '같이'
+        if (px1 - px0 > 50) {
+          ctx.fillStyle = PAL.ink
+          ctx.fillText(label, px0 + 6, by + bh / 2 + 0.5)
+        }
+      }
+    }
+
     /* 상자 선택 */
     if (dg?.type === 'box') {
       const bx = Math.min(dg.x0, dg.x1)
@@ -514,6 +559,17 @@ export function StageCanvas() {
       const p = local(e)
       if (p.x < GUTTER) return
       canvas.setPointerCapture(e.pointerId)
+      // 듀엣 파트 띠를 누르면 그 소절의 파트를 나 → 원곡 가수 → 같이 순서로 바꾼다
+      const dd = duetRef.current
+      if (dd.on && dd.parts.length && p.y >= canvas.clientHeight - BOTTOM - 2 && practiceRef.current === 'idle') {
+        const tt = tAt(p.x)
+        const idx = dd.parts.findIndex((pt) => tt >= pt.t0 && tt < pt.t1)
+        if (idx >= 0) {
+          const cur = dd.parts[idx].who
+          a.setDuetPart(idx, cur === 'me' ? 'orig' : cur === 'orig' ? 'both' : 'me')
+        }
+        return
+      }
       const edit = live.edit
       const h = edit ? hit(p.x, p.y) : null
 

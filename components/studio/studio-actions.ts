@@ -9,6 +9,7 @@ import { saveHistory, songKey } from '@/lib/history'
 import * as library from '@/lib/library'
 import * as tabSession from '@/lib/tab-session'
 import * as takesDb from '@/lib/takes'
+import { autoParts, myNotes, partAt, setPartWho, type DuetStyle, type DuetWho } from '@/lib/duet'
 import { createMasterChain, masterInfo, measureLufs, type MasterChain, type MasterPreset } from '@/lib/mastering'
 import { fillFromCurve } from '@/lib/note-check'
 import { FX_PRESETS, createVocalChain, layerGains, pitchCurve, renderKey, renderLayers, encodeWav, type FxParams, type RenderedLayers, type VocalChain } from '@/lib/vocal-fx'
@@ -211,7 +212,9 @@ export function createActions(env: ActionEnv) {
     }
     // 마이크로 들어온 소리는 micLatency 만큼 늦게 도착한다 → 그만큼 앞 시간의 노트와 비교
     const t = live.time - (st.micLatencyMs / 1000) * spd()
-    const target = engine.noteAt(live.notes, t)
+    const target0 = engine.noteAt(live.notes, t)
+    // 듀엣에서 원곡 가수 차례인 노트는 비교·채점하지 않는다
+    const target = target0 && myTurn(t) ? target0 : null
     if (frame.midi === null) {
       const last = live.trace[live.trace.length - 1]
       if (last && last.midi !== null) live.trace.push({ t, midi: null, tier: null })
@@ -319,7 +322,7 @@ export function createActions(env: ActionEnv) {
     const session = recorder.snapshot()
     const report = buildReport({
       session,
-      notes: st.notes,
+      notes: myNotes(st.notes, st.duet),
       shift: live.shift,
       userRange: st.userRange,
       origAt: st.project.real ? engine.realOrigPitchAt : undefined,
@@ -533,6 +536,29 @@ export function createActions(env: ActionEnv) {
       const vg = oc.createGain()
       vg.gain.value = st.takeVolume * st.takeVolume
       chain.output.connect(vg).connect(lim)
+      // 듀엣: 원곡 보컬은 원곡 가수·같이 파트에서만, 내 목소리는 나·같이 파트에서만
+      if (st.duet.on && st.duet.parts.length) {
+        const env = (param: AudioParam, on: number, mine: boolean) => {
+          param.setValueAtTime(0, 0)
+          for (const pt of st.duet.parts) {
+            const at = Math.max(0, (pt.t0 - a0) / sp)
+            const v = (mine ? pt.who !== 'orig' : pt.who !== 'me') ? on : 0
+            param.setTargetAtTime(v, at, 0.03)
+          }
+        }
+        env(vg.gain, st.takeVolume * st.takeVolume, true)
+        const gb = await p.getGuidePlayback()
+        if (gb) {
+          const gv = st.guideVolume > 0 ? st.guideVolume : 0.85
+          const gg = oc.createGain()
+          env(gg.gain, gv * gv, false)
+          const gs = oc.createBufferSource()
+          gs.buffer = gb
+          gs.playbackRate.value = sp
+          gs.connect(gg).connect(lim)
+          gs.start(0, Math.min(a0, gb.duration))
+        }
+      }
       const l = rendered.layers
       const gains = layerGains(st.fx, { tuned: !!l.tuned, harmony: !!l.harmony, double: !!l.double }, st.fxCompare)
       const add = (chans: Float32Array[] | null, gain: number) => {
@@ -1009,7 +1035,7 @@ export function createActions(env: ActionEnv) {
       set({ inputs, lyrics: null })
       if (inputs.lyrics?.file) await loadLyrics(inputs.lyrics.file, true)
       if (!(await analyze(true))) return false
-      set({ keyShift: clamp(song.settings.keyShift ?? 0, -7, 7), librarySongId: id })
+      set({ keyShift: clamp(song.settings.keyShift ?? 0, -7, 7), librarySongId: id, duet: { on: false, style: song.settings.duet?.style ?? 'section', parts: song.settings.duet?.parts ?? [] } })
       sRef.current = { ...sRef.current, librarySongId: id }
       const want = song.settings.mrOffsetMs
       // 화면 상태는 아직 갱신 전일 수 있어서 엔진에서 직접 읽는다
@@ -1041,6 +1067,48 @@ export function createActions(env: ActionEnv) {
     set({ keyShift: k })
     const id = sRef.current.librarySongId
     if (id && sRef.current.project.real) void library.patchSong(id, (x) => ({ ...x, settings: { ...x.settings, keyShift: k } }))
+  }
+
+  /* ------------------------------ 듀엣 ------------------------------ */
+  const saveDuet = (d: StudioState['duet']) => {
+    const id = sRef.current.librarySongId
+    if (id && sRef.current.project.real) void library.patchSong(id, (x) => ({ ...x, settings: { ...x.settings, duet: { style: d.style, parts: d.parts } } }))
+  }
+  const setDuet = (d: StudioState['duet']) => {
+    sRef.current = { ...sRef.current, duet: d }
+    set({ duet: d })
+  }
+  const toggleDuet = (on: boolean) => {
+    const st = sRef.current
+    if (on && !st.guideAvailable) return notify('듀엣 모드는 원곡 보컬이 필요해요. 보컬 파일을 넣거나 AI 분리를 켜고 분석해 주세요.')
+    if (on && st.practice.phase !== 'idle') return notify('연습 중에는 듀엣 모드를 바꿀 수 없어요.')
+    let parts = st.duet.parts
+    if (on && !parts.length) parts = autoParts(st.notes, st.lyrics, st.project.duration, st.duet.style)
+    const d = { ...st.duet, on, parts }
+    setDuet(d)
+    if (on) {
+      // 듀엣은 MR 위에 원곡 보컬을 파트대로 튼다
+      if (st.source !== 'mr') set({ source: 'mr' })
+      saveDuet(d)
+    }
+  }
+  const setDuetStyle = (style: DuetStyle) => {
+    const st = sRef.current
+    const d = { ...st.duet, style, parts: autoParts(st.notes, st.lyrics, st.project.duration, style) }
+    setDuet(d)
+    saveDuet(d)
+  }
+  const setDuetPart = (idx: number, who: DuetWho) => {
+    const d = { ...sRef.current.duet, parts: setPartWho(sRef.current.duet.parts, idx, who) }
+    setDuet(d)
+    saveDuet(d)
+  }
+  /** 지금 시각이 내가 부를 차례인가 (듀엣이 아니면 항상) */
+  const myTurn = (t: number) => {
+    const d = sRef.current.duet
+    if (!d.on) return true
+    const w = partAt(d.parts, t)
+    return w !== 'orig'
   }
 
   /* 곡에 저장된 녹음 */
@@ -1255,7 +1323,10 @@ export function createActions(env: ActionEnv) {
     pause,
     togglePlay,
     skip,
-    setSource: (source: Source) => set({ source }),
+    setSource: (source: Source) => {
+      if (source === 'original' && sRef.current.duet.on) return notify('듀엣 모드에서는 MR에 원곡 보컬을 파트대로 틀어요. 원곡으로 들으려면 듀엣 모드를 꺼 주세요.')
+      set({ source })
+    },
     setVolume: (volume: number) => {
       playerRef.current?.setVolume(sRef.current.muted ? 0 : volume)
       set({ volume })
@@ -1272,7 +1343,7 @@ export function createActions(env: ActionEnv) {
     setMicMonitorOn: (micMonitorOn: boolean) => set({ micMonitorOn }),
     setMicMonitorReverb: (micMonitorReverb: boolean) => set({ micMonitorReverb }),
     setGuideVolume: (v: number) => {
-      playerRef.current?.setGuideVolume(clamp(v, 0, 1))
+      playerRef.current?.setGuideVolume(sRef.current.duet.on && v <= 0 ? 0.85 : clamp(v, 0, 1))
       set({ guideVolume: clamp(v, 0, 1) })
     },
 
@@ -1330,6 +1401,9 @@ export function createActions(env: ActionEnv) {
 
     /* 편집 */
     setSelection: (ids: string[]) => set({ selection: ids }),
+    toggleDuet,
+    setDuetStyle,
+    setDuetPart,
     /** 노트 점검: 구간들을 원곡 보컬 음 선을 따라 노트로 채움 */
     fillGaps: (gaps: { start: number; end: number }[]) => {
       const st = sRef.current

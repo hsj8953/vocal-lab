@@ -4,6 +4,7 @@ import { Mic, Pause, Play, RotateCcw, RotateCw, Square } from 'lucide-react'
 import { useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { fmtTime, noteName } from '@/lib/music'
+import { DuetToggle } from './duet-panel'
 import { Mixer } from './mixer'
 import { SpeedControl } from './speed-control'
 import { OverviewCanvas } from './overview-canvas'
@@ -50,6 +51,7 @@ export function Transport() {
         </div>
 
         <PracticeButton />
+        <DuetToggle />
 
         <div className="font-mono text-[13px] tabular">
           <span ref={timeEl} className="text-foreground">

@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import * as engine from '@/lib/engine'
+import { partAt } from '@/lib/duet'
 import * as tabSession from '@/lib/tab-session'
 import type { FitInfo, Player, RangeSummary } from '@/lib/engine'
 import { createActions, type Actions } from './studio-actions'
@@ -42,6 +43,9 @@ export function useFrame(cb: FrameCb) {
   ref.current = cb
   useEffect(() => subscribe((n) => ref.current(n)), [subscribe])
 }
+
+/** 듀엣이면 원곡 보컬은 가이드 볼륨(0이면 85%)으로 */
+const duetGuideVol = (st: StudioState) => (st.duet.on ? (st.guideVolume > 0 ? st.guideVolume : 0.85) : st.guideVolume)
 
 export function StudioProvider({ children }: { children: ReactNode }) {
   const [s, setS] = useState<StudioState>(createInitialState)
@@ -154,6 +158,17 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         if (st.practice.phase === 'running' && l.time >= st.practice.t1) a.finishPractice()
         // 소절 반복
         else if (st.loop && st.view === 'studio' && l.time >= st.loop.b + 0.4) a.seek(Math.max(0, st.loop.a - 0.3))
+      }
+      // 듀엣: 지금 파트에 맞춰 원곡 보컬·내 녹음 소리를 켜고 끈다 (조금 앞을 보고 미리)
+      if (st.duet.on && st.duet.parts.length) {
+        const w = partAt(st.duet.parts, l.time + 0.06 * (player.getSpeed?.() ?? 1))
+        player.setGuideDuck(w === 'me' ? 0 : 1)
+        player.setTakeDuck(w === 'orig' ? 0 : 1)
+        if (l.duetWho !== w) l.duetWho = w
+      } else {
+        player.setGuideDuck(1)
+        player.setTakeDuck(1)
+        l.duetWho = null
       }
       subs.current.forEach((cb) => cb(now))
       raf = requestAnimationFrame(loop)
@@ -360,13 +375,19 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   useEffect(() => engine.setMicGain(s.micGain), [s.micGain])
   useEffect(() => engine.setMicMonitor(s.micMonitorOn ? s.micMonitor : 0, s.micMonitorReverb), [s.micMonitor, s.micMonitorOn, s.micMonitorReverb])
 
+  /* 듀엣이면 가이드 볼륨이 0이어도 원곡 가수 파트는 들려야 한다 */
+  useEffect(() => {
+    playerRef.current?.setGuideVolume(duetGuideVol(s))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.duet.on, s.guideVolume])
+
   /* 가이드 보컬: MR 재생 중이고 볼륨이 0보다 클 때만 만든다 */
-  const guideOn = isReal && s.source === 'mr' && s.guideAvailable && s.guideVolume > 0
+  const guideOn = isReal && s.source === 'mr' && s.guideAvailable && (s.guideVolume > 0 || s.duet.on)
   const guideKey = guideOn ? `${songKey}|guide|${s.keyShift}|${s.analysis.info?.vocOffset ?? 0}|${s.analysis.info?.method}|${s.inputs.vocal?.name ?? (s.analysis.info?.separated ? "sep" : "")}` : ''
   useEffect(() => {
     const p = playerRef.current
     if (!p) return
-    p.setGuideVolume(sRef.current.guideVolume)
+    p.setGuideVolume(duetGuideVol(sRef.current))
     if (!guideKey) {
       p.loadGuide(null)
       return

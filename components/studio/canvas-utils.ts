@@ -22,6 +22,13 @@ export const PAL = {
   outFill: 'oklch(0.7 0.17 25 / 0.045)',
 } as const
 
+/** 듀엣 파트 색: 나(하늘) · 원곡 가수(보라) · 같이(주황) */
+export const DUET_COLOR = {
+  me: 'oklch(0.82 0.125 205)',
+  orig: 'oklch(0.72 0.16 300)',
+  both: 'oklch(0.83 0.15 70)',
+} as const
+
 export const TIER_COLOR: Record<Tier, string> = {
   great: PAL.voice,
   ok: PAL.caution,

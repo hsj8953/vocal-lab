@@ -16,6 +16,8 @@ export interface LibSettings {
   keyShift: number
   /** MR을 손으로 밀었을 때의 오프셋(ms) */
   mrOffsetMs?: number
+  /** 듀엣 모드 파트 */
+  duet?: { style: 'section' | 'phrase' | 'chorus'; parts: { t0: number; t1: number; who: 'orig' | 'me' | 'both' }[] }
 }
 
 export interface LibSong {

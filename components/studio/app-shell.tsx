@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { cn } from '@/lib/utils'
+import { DuetPanel } from './duet-panel'
 import { ImportView } from './import-view'
 import { LiveHud } from './live-hud'
 import { LyricsOverlay } from './lyrics-overlay'
@@ -178,6 +179,7 @@ function StudioView() {
           <StageCanvas />
           <LiveHud />
           <LyricsOverlay />
+          <DuetPanel />
           <MeasureBanner />
           <PracticeOverlay />
           <LoopBanner />
