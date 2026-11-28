@@ -33,6 +33,7 @@ import { cn } from '@/lib/utils'
 import { FX_PRESETS, type FxParams } from '@/lib/vocal-fx'
 import { listTakes, type TakeMeta } from '@/lib/takes'
 import { analyzeRange, mergeStats, type EdgeAdvice } from '@/lib/range-advice'
+import { ConfirmButton } from './confirm-button'
 import { RangeCompare } from './range-compare'
 import { Seg } from './ui-bits'
 import { useFrame, useStudio } from './studio-provider'
@@ -93,9 +94,20 @@ export function ResultView() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={a.resetSession}>
-            <RotateCcw /> 기록 지우기
-          </Button>
+          <ConfirmButton
+            trigger={
+              <Button variant="outline" size="sm">
+                <RotateCcw /> 기록 지우기
+              </Button>
+            }
+            title="이번 연습 결과를 지울까요?"
+            desc={
+              s.currentTakeId
+                ? '화면의 결과만 지워져요. 곡에 저장된 녹음은 아래 \'이 곡의 내 녹음\'에 남아 있어서 다시 열 수 있어요.'
+                : '지우면 되돌릴 수 없어요. 이 결과와 녹음은 곡에 저장되지 않은 거라 다시 볼 수 없어요.'
+            }
+            onConfirm={a.resetSession}
+          />
           <Button size="sm" onClick={() => void a.startPractice()} className="bg-voice font-semibold text-background hover:bg-voice/90">
             <Mic /> 다시 연습하기
           </Button>
@@ -495,9 +507,16 @@ function SongTakes() {
                       열기
                     </Button>
                   )}
-                  <Button size="xs" variant="ghost" aria-label="녹음 지우기" onClick={() => void a.removeTake(m.id)}>
-                    <Trash2 />
-                  </Button>
+                  <ConfirmButton
+                    trigger={
+                      <Button size="xs" variant="ghost" aria-label="녹음 지우기">
+                        <Trash2 />
+                      </Button>
+                    }
+                    title="이 녹음을 지울까요?"
+                    desc={`${when(m.at)} · ${m.score}점 녹음이에요. 지우면 되돌릴 수 없어요.${m.starred ? ' 보관(⭐)한 녹음이에요.' : ''}`}
+                    onConfirm={() => void a.removeTake(m.id)}
+                  />
                 </span>
               </li>
             )

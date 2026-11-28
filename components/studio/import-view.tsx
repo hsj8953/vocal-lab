@@ -216,7 +216,7 @@ function SongCard({ song }: { song: LibSong }) {
       </p>
       {mode === 'delete' ? (
         <div className="mt-3 flex items-center gap-2 rounded-lg bg-miss/10 p-2 text-xs">
-          <span className="flex-1 text-miss">목록에서 지울까요?</span>
+          <span className="flex-1 text-miss">목록에서 지울까요? 이 곡에 저장된 녹음도 같이 지워져요.</span>
           <Button
             size="xs"
             variant="destructive"
