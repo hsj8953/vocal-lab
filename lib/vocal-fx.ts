@@ -22,6 +22,12 @@ export interface FxParams {
   tuneSpeed: number
   /** note: 노트마다 평균적으로 어긋난 만큼만 통째로 옮김 (자연스러움, 표현 유지) · live: 순간순간 따라가며 보정 (오토튠 효과) */
   tuneMode: 'note' | 'live'
+  /** 틀린 곳만 고치기 — 노트 단위에서 어긋남이 작은(25센트 미만) 노트는 그대로 둔다 */
+  tuneOnlyOff: boolean
+  /** 긴 음 처짐 펴기 — 길게 끄는 음에서 서서히 처지거나 뜨는 음을 노트 음에 평평하게 */
+  tuneFlatten: boolean
+  /** 고치지 않을 곳 (녹음 시간 기준 노트 시작 초, 0.01초 단위) */
+  tuneSkip: number[]
   /** 노이즈 게이트 0~1 */
   gate: number
   /** EQ (dB) */
@@ -50,6 +56,9 @@ export const FX_OFF: FxParams = {
   tune: 0,
   tuneSpeed: 80,
   tuneMode: 'note',
+  tuneOnlyOff: true,
+  tuneFlatten: false,
+  tuneSkip: [],
   gate: 0,
   low: 0,
   mid: 0,
@@ -91,7 +100,46 @@ export const FX_PRESETS: FxPreset[] = [
 ]
 
 /** 다시 계산이 필요한 값이 바뀌었는지 */
-export const renderKey = (p: FxParams) => [p.tune > 0 ? p.tune.toFixed(2) : 0, p.tune > 0 ? p.tuneMode : '', p.tune > 0 && p.tuneMode === 'live' ? p.tuneSpeed : 0, p.gate.toFixed(2), p.double > 0 ? 1 : 0, p.harmony].join('|')
+export const renderKey = (p: FxParams) =>
+  [
+    p.tune > 0 ? p.tune.toFixed(2) : 0,
+    p.tune > 0 ? p.tuneMode : '',
+    p.tune > 0 && p.tuneMode === 'live' ? p.tuneSpeed : 0,
+    p.tune > 0 && p.tuneMode === 'note' ? `${p.tuneOnlyOff ? 1 : 0}${p.tuneFlatten ? 1 : 0}:${(p.tuneSkip ?? []).join(',')}` : '',
+    p.gate.toFixed(2),
+    p.double > 0 ? 1 : 0,
+    p.harmony,
+  ].join('|')
+
+/**
+ * 튜닝 슬라이더 하나(0~100)로 방식·세기·속도를 정한다.
+ * 0 끔 · 1~70 자연스럽게(노트 단위, 세기 50→100%) · 71~100 오토튠 효과(실시간, 100이면 로봇)
+ */
+export function tuneFromLevel(v: number): Pick<FxParams, 'tune' | 'tuneMode' | 'tuneSpeed'> {
+  v = Math.max(0, Math.min(100, Math.round(v)))
+  if (v === 0) return { tune: 0, tuneMode: 'note', tuneSpeed: 80 }
+  if (v <= 70) return { tune: Math.round((0.5 + (0.5 * v) / 70) * 100) / 100, tuneMode: 'note', tuneSpeed: 80 }
+  return { tune: 1, tuneMode: 'live', tuneSpeed: Math.round((120 * (100 - v)) / 30) }
+}
+export function levelOfTune(p: Pick<FxParams, 'tune' | 'tuneMode' | 'tuneSpeed'>): number {
+  if (p.tune <= 0) return 0
+  if (p.tuneMode === 'note') return Math.max(1, Math.min(70, Math.round(((p.tune - 0.5) / 0.5) * 70)))
+  return Math.max(71, Math.min(100, Math.round(100 - (Math.min(120, p.tuneSpeed) * 30) / 120)))
+}
+
+/** 튜닝이 고친 곳 (녹음 시간 기준 초) */
+export interface TuneSpot {
+  /** 고치지 않기 표시에 쓰는 키 (노트 시작, 0.01초) */
+  key: number
+  t0: number
+  t1: number
+  /** 부른 음이 노트보다 몇 센트 높았나 (+높음, −낮음) */
+  cents: number
+  /** 긴 음 처짐을 폈나 */
+  flattened: boolean
+  /** 사용자가 고치지 않기로 함 */
+  skipped: boolean
+}
 
 /* ------------------------------------------------------------------ */
 /* 음 높이 곡선 (연습 기록에서)                                            */
@@ -393,6 +441,8 @@ export interface RenderedLayers {
   harmony: Float32Array | null
   /** 더블링 [왼쪽, 오른쪽] (끄면 null) */
   double: [Float32Array, Float32Array] | null
+  /** 튜닝이 고친 곳 (노트 단위일 때) */
+  spots: TuneSpot[]
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0))
@@ -407,7 +457,9 @@ export async function renderLayers(take: { data: Float32Array; sr: number }, cur
 
   // 오토튠 보정량 (반음, 5ms마다) — 목표 음과 2.5반음 넘게 다르면 다른 음을 부른 것으로 보고 손대지 않는다
   const corr = new Float32Array(nH)
+  const spots: TuneSpot[] = []
   if (p.tune > 0 && p.tuneMode === 'note') {
+    const skip = new Set(p.tuneSkip ?? [])
     // 노트마다: 가운데 부분에서 평균적으로 어긋난 만큼만 통째로 옮긴다 (비브라토·꺾기는 그대로)
     const spans = new Map<number, { a: number; b: number }>()
     for (let h = 0; h < nH; h++) {
@@ -427,8 +479,43 @@ export async function renderLayers(take: { data: Float32Array; sr: number }, cur
       d.sort((x, y) => x - y)
       const med = d[d.length >> 1]
       if (Math.abs(med) > 2.5) continue
-      for (let h = a; h <= b; h++) want[h] = med * p.tune
+      const key = Math.round(a * HOP * 100) / 100
+      const skipped = skip.has(key)
+      // 틀린 곳만: 25센트 안쪽이면 음은 그대로 (잘 부른 음은 손대지 않음)
+      const center = p.tuneOnlyOff && Math.abs(med) < 0.25 ? 0 : med
+      // 긴 음 처짐 펴기: 0.45초 넘는 음에서 느린 흐름(약 0.25초 평균)만 노트 음으로 — 비브라토 같은 빠른 떨림은 둔다
+      let flat: Float32Array | null = null
+      if (p.tuneFlatten && b - a >= 90) {
+        const W = 25
+        flat = new Float32Array(b - a + 1)
+        let any = false
+        for (let h = a; h <= b; h++) {
+          let sum = 0
+          let cnt = 0
+          for (let j = Math.max(a, h - W); j <= Math.min(b, h + W); j++)
+            if (Number.isFinite(curve.user[j])) {
+              sum += curve.user[j]
+              cnt++
+            }
+          if (cnt < 10 || !Number.isFinite(curve.target[h])) continue
+          // 노트 앞 30%(올려 들어가기)는 그대로 두고 점점 펴 준다
+          const ramp = Math.min(1, Math.max(0, ((h - a) / (b - a) - 0.3) / 0.2))
+          const drift = curve.target[h] - sum / cnt - center
+          if (Math.abs(drift) < 0.12) continue
+          flat[h - a] = Math.max(-1.5, Math.min(1.5, drift)) * ramp
+          if (Math.abs(flat[h - a]) >= 0.2) any = true
+        }
+        if (!any) flat = null
+      }
+      if (center === 0 && !flat) continue
+      // 목록에는 눈에 띄게 고친 곳(25센트 넘게 어긋남, 또는 처짐을 편 곳)만
+      if (Math.abs(med) >= 0.25 || flat) {
+        spots.push({ key, t0: a * HOP, t1: b * HOP, cents: Math.round(-med * 100), flattened: !!flat, skipped })
+        if (skipped) continue
+      }
+      for (let h = a; h <= b; h++) want[h] = (center + (flat ? flat[h - a] : 0)) * p.tune
     }
+    spots.sort((x, y) => x.t0 - y.t0)
     // 노트가 바뀔 때 보정량이 튀지 않게 앞뒤로 부드럽게 (약 30ms)
     const al = 1 - Math.exp(-5 / 30)
     let c = 0
@@ -502,7 +589,7 @@ export async function renderLayers(take: { data: Float32Array; sr: number }, cur
     double = [shiftTo(9, 23), shiftTo(-9, 31)]
   }
   onProg?.(1)
-  return { raw, tuned, harmony, double }
+  return { raw, tuned, harmony, double, spots }
 }
 
 /* ------------------------------------------------------------------ */

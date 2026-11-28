@@ -348,6 +348,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     }
   }, [s.guideVolume, s.micGain, s.micMonitor, s.micMonitorReverb, s.userRange, s.syncMs, s.micLatencyMs, s.notation, s.volume, s.analysis.sensitivity, s.analysis.splitSyllables, s.analysis.autofill, s.analysis.pitchModel, s.analysis.crepeModel, s.analysis.separate, s.fx, s.fxPreset, s.showOrigLine, s.origLineAlways])
 
+  /* 마스터링: 켜져 있으면 효과·볼륨·녹음이 바뀔 때 음량을 다시 잰다 */
+  useEffect(() => {
+    if (s.master.preset === 'off' || !s.takeAvailable || s.fxBusy !== null) return
+    const t = setTimeout(() => void a.refreshMaster(), 900)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.fx, s.fxCompare, s.takeVolume, s.volume, s.resultMr, s.muted, s.takeAvailable, s.fxBusy, s.currentTakeId, s.practiceSpan])
+
   /* 마이크 입력 감도 · 내 목소리 듣기 */
   useEffect(() => engine.setMicGain(s.micGain), [s.micGain])
   useEffect(() => engine.setMicMonitor(s.micMonitorOn ? s.micMonitor : 0, s.micMonitorReverb), [s.micMonitor, s.micMonitorOn, s.micMonitorReverb])

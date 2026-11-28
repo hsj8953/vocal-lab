@@ -2,6 +2,7 @@
 
 import {
   ArrowLeft,
+  Gauge,
   Star,
   Trash2,
   ChevronDown,
@@ -28,10 +29,12 @@ import { loadHistory, phraseDelta, songKey, type HistoryEntry } from '@/lib/hist
 import { buildReport, type Coaching, type Metric, type MetricGroup, type PhraseScore, type RangeCell, type Report, type Status } from '@/lib/report'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
+import { Switch } from '@/components/ui/switch'
 import { fmtSigned, fmtTime, noteName } from '@/lib/music'
 import { cn } from '@/lib/utils'
-import { FX_PRESETS, type FxParams } from '@/lib/vocal-fx'
+import { FX_PRESETS, levelOfTune, tuneFromLevel, type FxParams } from '@/lib/vocal-fx'
 import { listTakes, type TakeMeta } from '@/lib/takes'
+import { MASTER_PRESETS, masterInfo, type MasterPreset } from '@/lib/mastering'
 import { analyzeRange, mergeStats, type EdgeAdvice } from '@/lib/range-advice'
 import { ConfirmButton } from './confirm-button'
 import { RangeCompare } from './range-compare'
@@ -1231,22 +1234,7 @@ function FxPanel() {
       ))}
       <p className="mt-1.5 text-[11px] text-muted-foreground">{FX_PRESETS.find((p) => p.id === s.fxPreset)?.desc ?? '직접 조절한 효과'}</p>
 
-      {fx.tune > 0 ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-muted/40 p-2.5">
-          <span className="text-xs font-medium">튜닝 비교</span>
-          <Seg
-            label="튜닝 비교"
-            size="sm"
-            value={s.fxCompare}
-            onChange={a.setFxCompare}
-            options={[
-              { value: 'raw', label: '튜닝 전 (내 음 그대로)' },
-              { value: 'tuned', label: '튜닝 후 (맞는 음)' },
-            ]}
-          />
-          <span className="w-full text-[11px] text-muted-foreground">재생하면서 번갈아 눌러 보세요. 튜닝 후에서 달라지는 곳이 음이 어긋난 곳이에요.</span>
-        </div>
-      ) : null}
+      <TuneBlock />
 
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="mt-3 flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
         <SlidersHorizontal className="size-3.5" /> 세부 조절
@@ -1254,32 +1242,6 @@ function FxPanel() {
       </button>
       {open ? (
         <div className="mt-2 space-y-4 text-xs">
-          <FxGroup title="오토튠" hint="노트의 음으로 내 음을 맞춰요">
-            <Seg
-              label="보정 방식"
-              size="sm"
-              className="w-full"
-              value={fx.tuneMode}
-              onChange={(v) => set({ tuneMode: v })}
-              options={[
-                { value: 'note', label: '자연스럽게 (노트 단위)', title: '노트마다 평균적으로 어긋난 만큼만 옮겨요. 바이브레이션·꺾기는 그대로' },
-                { value: 'live', label: '오토튠 효과 (실시간)', title: '순간순간 따라가며 맞춰요. 빠르게 하면 로봇 느낌' },
-              ]}
-            />
-            <FxSlider label="세기" value={fx.tune} min={0} max={1} step={0.05} fmt={pct} onChange={(v) => set({ tune: v })} />
-            {fx.tuneMode === 'live' ? (
-              <FxSlider
-                label="속도"
-                value={fx.tuneSpeed}
-                min={0}
-                max={250}
-                step={10}
-                fmt={(v) => (v <= 10 ? '로봇' : `${v}ms`)}
-                onChange={(v) => set({ tuneSpeed: v })}
-                hint="작을수록 음에 딱 붙어요(로봇 느낌), 클수록 자연스러워요"
-              />
-            ) : null}
-          </FxGroup>
           <FxGroup title="리버브" hint="공간의 울림">
             <Seg
               label="리버브 종류"
@@ -1333,11 +1295,191 @@ function FxPanel() {
         </div>
       ) : null}
 
-      <Button variant="outline" className="mt-4 w-full" disabled={s.exporting || s.fxBusy !== null} onClick={() => void a.exportMix()}>
+      <MasterBlock />
+
+      <Button variant="outline" className="mt-4 w-full" disabled={s.exporting || s.fxBusy !== null || s.master.busy} onClick={() => void a.exportMix()}>
         {s.exporting ? <Loader2 className="animate-spin" /> : <Download />}
-        {s.exporting ? '저장하는 중…' : '효과 넣어 저장 (WAV)'}
+        {s.exporting ? '저장하는 중…' : s.master.preset !== 'off' ? '효과·마스터링 넣어 저장 (WAV)' : '효과 넣어 저장 (WAV)'}
       </Button>
-      <p className="mt-1.5 text-[11px] text-muted-foreground">지금 들리는 그대로(내 목소리·반주 볼륨, 튜닝 전/후 포함) 저장돼요.</p>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">
+        지금 들리는 그대로(내 목소리·반주 볼륨, 튜닝 전/후 포함) 저장돼요.{s.master.preset !== 'off' ? ' 마스터링은 비교 듣기와 상관없이 항상 넣어서 저장해요.' : ''}
+      </p>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* 튜닝 — 슬라이더 하나 + 틀린 곳만 · 긴 음 처짐 · 고친 곳 전/후 듣기             */
+/* ------------------------------------------------------------------ */
+
+function TuneBlock() {
+  const { s, a } = useStudio()
+  const fx = s.fx
+  const lv = levelOfTune(fx)
+  const [showSpots, setShowSpots] = useState(false)
+  const noteMode = fx.tune > 0 && fx.tuneMode === 'note'
+  const spots = noteMode ? s.tuneSpots : []
+  const desc =
+    lv === 0
+      ? '튜닝 없이 내 음 그대로'
+      : lv <= 35
+        ? '티 안 나게 살짝 — 어긋난 만큼의 일부만 맞춰요'
+        : lv <= 70
+          ? '확실하게 — 어긋난 음을 노트 음에 맞춰요. 떨림·꺾기는 그대로'
+          : lv < 95
+            ? '오토튠 효과 — 순간순간 음에 붙여요'
+            : '로봇 소리 — 음이 계단처럼 딱딱 꺾여요'
+  return (
+    <div className="mt-3 rounded-lg bg-muted/40 p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-semibold">튜닝 (음정 다듬기)</span>
+        <span className="text-[11px] text-muted-foreground">{lv === 0 ? '끔' : `${lv}`}</span>
+      </div>
+      <Slider className="mt-2.5" value={[lv]} min={0} max={100} step={1} aria-label="튜닝 세기" onValueChange={(v) => a.setFx(tuneFromLevel(Array.isArray(v) ? v[0] : (v as number)), s.fxPreset)} />
+      <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
+        <span>끔</span>
+        <span>자연스럽게</span>
+        <span>확실하게</span>
+        <span>오토튠</span>
+      </div>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">{desc}</p>
+
+      {noteMode ? (
+        <div className="mt-2.5 space-y-2">
+          <label className="flex items-center justify-between gap-3 text-xs">
+            <span>
+              틀린 곳만 고치기
+              <span className="block text-[10px] text-muted-foreground">잘 부른 음(25센트 안쪽)은 손대지 않아서 더 자연스러워요</span>
+            </span>
+            <Switch checked={fx.tuneOnlyOff} onCheckedChange={(v) => a.setFx({ tuneOnlyOff: !!v }, s.fxPreset)} aria-label="틀린 곳만 고치기" />
+          </label>
+          <label className="flex items-center justify-between gap-3 text-xs">
+            <span>
+              긴 음 처짐 펴기
+              <span className="block text-[10px] text-muted-foreground">길게 끄는 음 끝이 처지거나 뜨는 걸 평평하게 (떨림은 그대로)</span>
+            </span>
+            <Switch checked={fx.tuneFlatten} onCheckedChange={(v) => a.setFx({ tuneFlatten: !!v }, s.fxPreset)} aria-label="긴 음 처짐 펴기" />
+          </label>
+        </div>
+      ) : null}
+
+      {fx.tune > 0 ? (
+        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium">비교</span>
+          <Seg
+            label="튜닝 비교"
+            size="sm"
+            value={s.fxCompare}
+            onChange={a.setFxCompare}
+            options={[
+              { value: 'raw', label: '튜닝 전' },
+              { value: 'tuned', label: '튜닝 후' },
+            ]}
+          />
+          <span className="w-full text-[11px] text-muted-foreground">재생하면서 번갈아 눌러 보세요.</span>
+        </div>
+      ) : null}
+
+      {noteMode && s.fxBusy === null ? (
+        spots.length ? (
+          <div className="mt-2.5">
+            <button type="button" onClick={() => setShowSpots((v) => !v)} aria-expanded={showSpots} className="flex w-full items-center gap-1.5 text-xs font-medium hover:text-voice">
+              고친 곳 {spots.filter((x) => !x.skipped).length}군데{spots.some((x) => x.skipped) ? ` (안 고침 ${spots.filter((x) => x.skipped).length})` : ''}
+              <ChevronDown className={cn('ml-auto size-3.5 transition-transform', showSpots && 'rotate-180')} />
+            </button>
+            {showSpots ? (
+              <ul className="scroll-thin mt-2 max-h-64 divide-y divide-border overflow-y-auto rounded-lg border border-border bg-background/40">
+                {spots.map((sp) => (
+                  <li key={sp.key} className={cn('flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5 text-xs', sp.skipped && 'opacity-60')}>
+                    <span className="font-mono text-muted-foreground tabular">{fmtTime(sp.t0)}</span>
+                    <span className="min-w-0 flex-1" title={`노트보다 ${sp.cents > 0 ? '+' : ''}${sp.cents}센트 (100센트 = 반음)`}>
+                      {Math.abs(sp.cents) >= 25 ? `${Math.abs(sp.cents) < 50 ? '살짝' : Math.abs(sp.cents) < 100 ? '꽤' : '반음 넘게'} ${sp.cents > 0 ? '높게' : '낮게'} 부름 → 맞춤` : ''}
+                      {sp.flattened ? `${Math.abs(sp.cents) >= 25 ? ' · ' : ''}처짐 폄` : ''}
+                    </span>
+                    <Button size="xs" variant="ghost" onClick={() => a.listenSpot(sp.t0, sp.t1, 'raw')}>
+                      전
+                    </Button>
+                    <Button size="xs" variant="ghost" onClick={() => a.listenSpot(sp.t0, sp.t1, 'tuned')}>
+                      후
+                    </Button>
+                    <Switch size="sm" checked={!sp.skipped} onCheckedChange={() => a.toggleTuneSkip(sp.key)} aria-label={`${fmtTime(sp.t0)} 고치기`} />
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {showSpots ? <p className="mt-1 text-[10px] text-muted-foreground">'전/후'로 그 부분만 들어 보고, 고치지 않는 게 나은 곳은 스위치를 끄세요.</p> : null}
+          </div>
+        ) : (
+          <p className="mt-2 text-[11px] text-muted-foreground">크게 어긋난 곳이 없어서 고친 곳이 거의 없어요.</p>
+        )
+      ) : null}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* 마스터링 — 완성본 크기 맞추기 + 같은 크기로 전/후 비교                       */
+/* ------------------------------------------------------------------ */
+
+function MasterBlock() {
+  const { s, a } = useStudio()
+  const m = s.master
+  const info = masterInfo(m.preset)
+  const r1 = (v: number) => Math.round(v * 10) / 10
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <h3 className="flex items-center gap-1.5 text-sm font-semibold">
+        <Gauge className="size-4 text-voice" /> 마스터링 (완성본 마무리)
+        {m.busy ? (
+          <span className="ml-auto flex items-center gap-1.5 text-[11px] font-normal text-muted-foreground" role="status">
+            <Loader2 className="size-3.5 animate-spin" /> 음량 재는 중
+          </span>
+        ) : null}
+      </h3>
+      <div className="mt-2.5 grid grid-cols-4 gap-1.5">
+        {([{ id: 'off', label: '끔', desc: '마스터링 없이' }, ...MASTER_PRESETS] as { id: MasterPreset; label: string; desc: string }[]).map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            title={p.desc}
+            aria-pressed={m.preset === p.id}
+            onClick={() => a.setMasterPreset(p.id)}
+            className={cn('rounded-lg border px-1.5 py-1.5 text-xs font-medium transition-colors', m.preset === p.id ? 'border-voice bg-voice/15 text-voice' : 'border-border bg-background/40 hover:bg-muted')}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">{info ? info.desc : '반주와 섞은 완성본의 크기를 음원 수준으로 맞추고, 찢어지는 소리를 막아요.'}</p>
+      {info && m.after !== null && m.before !== null && !m.busy ? (
+        <>
+          <p className="mt-2 text-xs">
+            소리 크기 <span className="font-mono">{r1(m.before)}</span> → <b className="font-mono text-voice">{r1(m.after)}</b> LUFS
+            <span className="text-muted-foreground"> (약 {Math.round(m.after - m.before) >= 0 ? '+' : ''}{Math.round(m.after - m.before)}dB)</span>
+          </p>
+          {info && m.before >= info.target - 0.5 ? <p className="mt-1 text-[11px] text-muted-foreground">반주가 이미 충분히 커서 크기는 거의 그대로 두고, 소리를 묶어 주고 찢어지는 소리만 막았어요.</p> : null}
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-muted/40 p-2.5">
+            <span className="text-xs font-medium">비교</span>
+            <Seg
+              label="마스터링 비교"
+              size="sm"
+              value={m.compare}
+              onChange={a.setMasterCompare}
+              options={[
+                { value: 'before', label: '마스터링 전' },
+                { value: 'after', label: '마스터링 후' },
+              ]}
+            />
+            <label className="flex w-full items-center justify-between gap-3 text-xs">
+              <span>
+                같은 크기로 맞춰 비교
+                <span className="block text-[10px] text-muted-foreground">크면 무조건 좋게 들리는 착각을 막아요. 켜 두면 '후'도 '전'과 같은 크기로 들려요.</span>
+              </span>
+              <Switch checked={m.matched} onCheckedChange={(v) => a.setMasterMatched(!!v)} aria-label="같은 크기로 맞춰 비교" />
+            </label>
+          </div>
+        </>
+      ) : null}
     </div>
   )
 }

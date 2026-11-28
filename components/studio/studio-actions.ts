@@ -9,6 +9,7 @@ import { saveHistory, songKey } from '@/lib/history'
 import * as library from '@/lib/library'
 import * as tabSession from '@/lib/tab-session'
 import * as takesDb from '@/lib/takes'
+import { createMasterChain, masterInfo, measureLufs, type MasterChain, type MasterPreset } from '@/lib/mastering'
 import { fillFromCurve } from '@/lib/note-check'
 import { FX_PRESETS, createVocalChain, layerGains, pitchCurve, renderKey, renderLayers, encodeWav, type FxParams, type RenderedLayers, type VocalChain } from '@/lib/vocal-fx'
 import type { LyricLine, Lyrics } from './studio-types'
@@ -367,7 +368,16 @@ export function createActions(env: ActionEnv) {
       }
     }
     take = { t0, data, sr, rate: takeRate }
+    clearTuneSkip()
     await applyFx(sRef.current.fx, true)
+  }
+
+  /** '고치지 않을 곳'은 녹음마다 다르니 새 녹음에서는 비운다 */
+  const clearTuneSkip = () => {
+    if (!sRef.current.fx.tuneSkip?.length) return
+    const fx = { ...sRef.current.fx, tuneSkip: [] }
+    sRef.current = { ...sRef.current, fx }
+    set({ fx })
   }
 
   /** 효과 적용 — 바로 바뀌는 값은 즉시, 다시 계산할 값은 바뀌었을 때만 */
@@ -388,6 +398,7 @@ export function createActions(env: ActionEnv) {
       const layers = await renderLayers(tk, curve, sRef.current.notes, live.shift, fx, (r) => tok === renderTok && set({ fxBusy: r }))
       if (tok !== renderTok || take !== tk) return
       rendered = { key, layers }
+      set({ tuneSpots: layers.spots.map((sp) => ({ ...sp, t0: tk.t0 + sp.t0 * tk.rate, t1: tk.t0 + sp.t1 * tk.rate })) })
       const mk = (id: string, chans: Float32Array[]) => {
         const b = ctx.createBuffer(chans.length, chans[0].length, tk.sr)
         chans.forEach((c, i) => b.copyToChannel(c as Float32Array<ArrayBuffer>, i))
@@ -435,13 +446,12 @@ export function createActions(env: ActionEnv) {
   }
 
   /** 효과 넣은 내 노래 + 반주를 WAV로 저장 */
-  const exportMix = async () => {
+  /** 반주 + 효과 넣은 내 목소리를 지금 들리는 그대로 섞는다 (master를 주면 마스터링까지) */
+  const renderMix = async (master: { preset: MasterPreset; gainDb: number } | null): Promise<AudioBuffer | null> => {
     const st = sRef.current
     const p = playerRef.current
-    if (!take || !rendered || !p) return notify('저장할 녹음이 없어요.')
-    if (st.fxBusy !== null) return notify('효과를 계산하는 중이에요. 잠시 후 다시 눌러 주세요.')
-    set({ exporting: true })
-    try {
+    if (!take || !rendered || !p) return null
+    {
       const span = st.practiceSpan ?? { t0: take.t0, t1: take.t0 + (take.data.length / take.sr) * take.rate }
       const a0 = Math.max(0, span.t0 - 0.3)
       const a1 = span.t1 + 2
@@ -456,7 +466,16 @@ export function createActions(env: ActionEnv) {
       lim.ratio.value = 20
       lim.attack.value = 0.002
       lim.release.value = 0.1
-      lim.connect(oc.destination)
+      const info = master ? masterInfo(master.preset) : null
+      if (info) {
+        // 마스터링은 기본 리미터 대신 들어간다
+        const mc = createMasterChain(oc, info, master!.gainDb)
+        mc.output.connect(oc.destination)
+        lim.disconnect()
+        lim.connect(mc.input)
+        lim.threshold.value = 0
+        lim.ratio.value = 1
+      } else lim.connect(oc.destination)
       const mr = pb.buf
       if (mr && st.resultMr && !st.muted) {
         const g = oc.createGain()
@@ -489,21 +508,120 @@ export function createActions(env: ActionEnv) {
       add(l.tuned ? [l.tuned] : null, gains.tuned)
       add(l.harmony ? [l.harmony] : null, gains.harmony)
       add(l.double, gains.double)
-      const out = await oc.startRendering()
+      return await oc.startRendering()
+    }
+  }
+
+  const exportMix = async () => {
+    const st = sRef.current
+    if (!take || !rendered || !playerRef.current) return notify('저장할 녹음이 없어요.')
+    if (st.fxBusy !== null) return notify('효과를 계산하는 중이에요. 잠시 후 다시 눌러 주세요.')
+    if (st.master.busy) return notify('마스터링을 계산하는 중이에요. 잠시 후 다시 눌러 주세요.')
+    set({ exporting: true })
+    try {
+      const m = st.master.preset !== 'off' && st.master.after !== null ? { preset: st.master.preset, gainDb: st.master.gainDb } : null
+      const out = await renderMix(m)
+      if (!out) return notify('저장할 녹음이 없어요.')
       const url = URL.createObjectURL(encodeWav(out))
       const el = document.createElement('a')
       el.href = url
-      el.download = `${st.project.title || '내 노래'} (내 노래).wav`
+      el.download = `${st.project.title || '내 노래'} (내 노래${m ? ' · 마스터링' : ''}).wav`
       document.body.appendChild(el)
       el.click()
       el.remove()
       setTimeout(() => URL.revokeObjectURL(url), 15000)
-      notify('효과를 넣은 내 노래를 저장했어요.')
+      notify(m ? '효과와 마스터링을 넣은 내 노래를 저장했어요.' : '효과를 넣은 내 노래를 저장했어요.')
     } catch (e) {
       notify('저장하지 못했어요: ' + (e instanceof Error ? e.message : String(e)))
     } finally {
       set({ exporting: false })
     }
+  }
+
+  /* 마스터링 — 전·후 음량을 재서 목표 크기에 맞는 올림 양을 정한다 */
+  let masterObj: MasterChain | null = null
+  let masterTok = 0
+  const applyMasterRouting = () => {
+    const p = playerRef.current
+    const m = sRef.current.master
+    if (!p) return
+    if (m.preset === 'off' || !masterObj || m.after === null || m.compare === 'before') {
+      p.setMaster(null)
+      return
+    }
+    masterObj.setTrim(m.matched && m.before !== null ? Math.min(0, m.before - m.after) : 0)
+    p.setMaster(masterObj)
+  }
+  const setMasterState = (patch: Partial<StudioState['master']>) => {
+    const master = { ...sRef.current.master, ...patch }
+    sRef.current = { ...sRef.current, master }
+    set({ master })
+  }
+  const refreshMaster = async () => {
+    const preset = sRef.current.master.preset
+    const info = masterInfo(preset)
+    const tok = ++masterTok
+    if (!info) {
+      masterObj = null
+      setMasterState({ busy: false, before: null, after: null, gainDb: 0 })
+      return applyMasterRouting()
+    }
+    if (!take || !rendered) return
+    setMasterState({ busy: true })
+    try {
+      const mix0 = await renderMix(null)
+      if (!mix0 || tok !== masterTok) return
+      const before = measureLufs(mix0)
+      // 이미 목표보다 크면 줄이지 않고 원래 크기를 지킨다 (마스터링이 소리를 작게 만들면 이상하니까)
+      const goal = Math.max(info.target, before)
+      let g = Math.max(-6, Math.min(24, goal - before))
+      // 리미터·컴프레서 때문에 정확히 안 맞으니 한 번 더 재서 보정
+      const mix1 = await renderMix({ preset, gainDb: g })
+      if (!mix1 || tok !== masterTok) return
+      const l1 = measureLufs(mix1)
+      g = Math.max(-6, Math.min(24, g + (goal - l1)))
+      const mix2 = await renderMix({ preset, gainDb: g })
+      if (!mix2 || tok !== masterTok) return
+      const after = measureLufs(mix2)
+      const ctx = playerRef.current!.audioContext()
+      masterObj = createMasterChain(ctx, info, g)
+      setMasterState({ busy: false, before, after, gainDb: g })
+      applyMasterRouting()
+    } catch (e) {
+      if (tok === masterTok) {
+        setMasterState({ busy: false })
+        notify('마스터링을 계산하지 못했어요: ' + (e instanceof Error ? e.message : String(e)))
+      }
+    }
+  }
+  const setMasterPreset = (preset: MasterPreset) => {
+    setMasterState({ preset, compare: 'after' })
+    void refreshMaster()
+  }
+  const setMasterCompare = (compare: 'after' | 'before') => {
+    setMasterState({ compare })
+    applyMasterRouting()
+  }
+  const setMasterMatched = (matched: boolean) => {
+    setMasterState({ matched })
+    applyMasterRouting()
+  }
+
+  /** 튜닝이 고친 한 곳을 전/후로 들어 보기 */
+  let spotTimer: ReturnType<typeof setTimeout> | undefined
+  const listenSpot = (t0: number, t1: number, which: 'raw' | 'tuned') => {
+    clearTimeout(spotTimer)
+    setFxCompare(which)
+    pause()
+    const a0 = Math.max(0, t0 - 0.6)
+    seek(a0)
+    void play()
+    const sp = playerRef.current?.getSpeed() ?? 1
+    spotTimer = setTimeout(() => pause(), ((t1 + 0.4 - a0) / sp) * 1000)
+  }
+  const toggleTuneSkip = (key: number) => {
+    const cur = sRef.current.fx.tuneSkip ?? []
+    setFx({ tuneSkip: cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key] }, sRef.current.fxPreset)
   }
 
   /* 녹음 다시 보기: 스튜디오 화면에서 내 목소리를 들으며 그때 그린 선을 다시 본다 */
@@ -573,7 +691,10 @@ export function createActions(env: ActionEnv) {
       takeSpeed: rec.take?.rate ?? 1,
       currentTakeId: rec.takeId ?? null,
     })
-    if (rec.take) void applyFx(sRef.current.fx, true)
+    if (rec.take) {
+      clearTuneSkip()
+      void applyFx(sRef.current.fx, true)
+    }
   }
   const clearLoop = () => set({ loop: null })
 
@@ -1156,6 +1277,12 @@ export function createActions(env: ActionEnv) {
     setFxPreset,
     setFxCompare,
     exportMix,
+    refreshMaster,
+    setMasterPreset,
+    setMasterCompare,
+    setMasterMatched,
+    listenSpot,
+    toggleTuneSkip,
     setResultMr: (resultMr: boolean) => set({ resultMr }),
 
     /* 편집 */

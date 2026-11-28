@@ -1,3 +1,5 @@
+import type { TuneSpot } from '@/lib/vocal-fx'
+import type { MasterPreset } from '@/lib/mastering'
 import * as engine from '@/lib/engine'
 import type { AlignResult, Compare, CrepeModel, Note, OctaveMode, PitchModel, RealInfo, SessionStats, Tier, UserRange } from '@/lib/engine'
 import type { Notation } from '@/lib/music'
@@ -69,6 +71,20 @@ export interface MeasureState {
   step: 'idle' | 'low' | 'high'
   low: number | null
   high: number | null
+}
+
+export interface MasterState {
+  preset: MasterPreset
+  /** 음량을 올린 양 (dB) */
+  gainDb: number
+  /** 마스터링 전·후 음량 (LUFS) */
+  before: number | null
+  after: number | null
+  busy: boolean
+  /** 비교 듣기: 후 / 전 */
+  compare: 'after' | 'before'
+  /** 같은 크기로 맞춰 비교 */
+  matched: boolean
 }
 
 export interface StudioState {
@@ -147,6 +163,10 @@ export interface StudioState {
   fxPreset: string
   /** 튜닝 전/후 비교: 지금 들리는 쪽 */
   fxCompare: 'tuned' | 'raw'
+  /** 튜닝이 고친 곳 (곡 시간) */
+  tuneSpots: TuneSpot[]
+  /** 마스터링 */
+  master: MasterState
   /** 효과 계산 중 (0~1), 아니면 null */
   fxBusy: number | null
   /** 저장 중 */
@@ -298,6 +318,8 @@ export function createInitialState(): StudioState {
     fx: FX_OFF,
     fxPreset: 'raw',
     fxCompare: 'tuned',
+    tuneSpots: [],
+    master: { preset: 'off', gainDb: 0, before: null, after: null, busy: false, compare: 'after', matched: true },
     fxBusy: null,
     exporting: false,
     librarySongId: null,

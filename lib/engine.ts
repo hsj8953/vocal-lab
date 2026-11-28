@@ -928,6 +928,8 @@ export interface Player {
   setTakeVolume: (v: number) => void
   /** 내 목소리에 걸 효과 체인. null이면 효과 없음 */
   setTakeChain: (chain: { input: AudioNode; output: AudioNode } | null) => void
+  /** 마스터링: 반주+내 목소리를 다 섞은 뒤에 거는 처리 (null이면 기본 리미터만) */
+  setMaster: (chain: { input: AudioNode; output: AudioNode } | null) => void
   /** 지금 재생 중인 반주 버퍼 (저장용) */
   getBuffer: () => AudioBuffer | null
   /** 배속을 반영한 재생 버퍼(음 높이 보정)와 배속 (저장용 — 처음엔 계산에 시간이 걸림) */
@@ -1011,6 +1013,19 @@ export function createPlayer(): Player {
   }
   let takeSrcs: AudioBufferSourceNode[] = []
   let takeBus: GainNode | null = null
+  /* 반주와 내 목소리가 모이는 곳 → (마스터링) → 리미터 → 스피커 */
+  let mixBus: GainNode | null = null
+  let baseLim: DynamicsCompressorNode | null = null
+  let master: { input: AudioNode; output: AudioNode } | null = null
+  const wireMaster = () => {
+    if (!mixBus || !baseLim || !ctx) return
+    mixBus.disconnect()
+    if (master) {
+      mixBus.connect(master.input)
+      master.output.disconnect()
+      master.output.connect(ctx.destination)
+    } else mixBus.connect(baseLim)
+  }
   let takeGain: GainNode | null = null
   let takeVol = 0
   let chain: { input: AudioNode; output: AudioNode } | null = null
@@ -1036,8 +1051,11 @@ export function createPlayer(): Player {
       lim.ratio.value = 20
       lim.attack.value = 0.002
       lim.release.value = 0.1
-      gain.connect(lim)
+      mixBus = ctx.createGain()
+      baseLim = lim
+      gain.connect(mixBus)
       lim.connect(ctx.destination)
+      wireMaster()
       mainIn = ctx.createGain()
       mainIn.connect(gain)
       guideGain = ctx.createGain()
@@ -1063,7 +1081,7 @@ export function createPlayer(): Player {
       // 내 목소리는 반주 볼륨과 따로 조절한다
       takeGain = ctx.createGain()
       takeGain.gain.value = takeVol * takeVol
-      takeGain.connect(lim)
+      takeGain.connect(mixBus)
       takeBus = ctx.createGain()
       wireChain()
     }
@@ -1234,6 +1252,12 @@ export function createPlayer(): Player {
     setLayerGain(id, v) {
       const L = layers.find((x) => x.id === id)
       if (L && ctx) L.g.gain.setTargetAtTime(v, ctx.currentTime, 0.015)
+    },
+    setMaster(c) {
+      ensure()
+      if (master && master !== c) master.output.disconnect()
+      master = c
+      wireMaster()
     },
     setTakeChain(c) {
       ensure()
