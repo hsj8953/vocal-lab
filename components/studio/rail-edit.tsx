@@ -35,7 +35,7 @@ export function RailEdit() {
           ]}
         />
         <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
-          {s.tool === 'select' && '노트를 눌러 선택하고 끌어서 옮겨요. 양 끝을 끌면 길이가 바뀌어요. Shift+클릭으로 여러 개 선택.'}
+          {s.tool === 'select' && '노트를 눌러 선택하고 끌어서 옮겨요. 양 끝을 끌면 길이가 바뀌어요. 빈 곳을 끌면 상자 안 노트가 한꺼번에 선택돼요(Shift를 누르고 끌면 더하기). 재생 위치는 Alt+끌기나 아래 전체 막대로 옮겨요.'}
           {s.tool === 'add' && '빈 곳을 끌어서 새 노트를 그려요. 클릭만 하면 0.4초 노트가 만들어져요.'}
           {s.tool === 'cut' && '자를 노트 위를 클릭하세요. 클릭한 지점에서 둘로 나뉘어요.'}
         </p>

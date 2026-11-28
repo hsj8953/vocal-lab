@@ -28,6 +28,7 @@ type Drag =
   | { type: 'move'; x0: number; y0: number; orig: Note[]; ids: Set<string>; started: boolean }
   | { type: 'resize'; edge: 'l' | 'r'; orig: Note; started: boolean }
   | { type: 'add'; t0: number; midi: number; t1: number }
+  | { type: 'box'; x0: number; y0: number; x1: number; y1: number; base: Set<string> }
 
 export function StageCanvas() {
   const { s, a, live } = useStudio()
@@ -304,6 +305,22 @@ export function StageCanvas() {
       ctx.fill()
       ctx.globalAlpha = 1
     }
+    /* 상자 선택 */
+    if (dg?.type === 'box') {
+      const bx = Math.min(dg.x0, dg.x1)
+      const by = Math.min(dg.y0, dg.y1)
+      const bw = Math.abs(dg.x1 - dg.x0)
+      const bh = Math.abs(dg.y1 - dg.y0)
+      if (bw > 2 || bh > 2) {
+        ctx.fillStyle = 'oklch(0.82 0.13 195 / 0.12)'
+        ctx.fillRect(bx, by, bw, bh)
+        ctx.strokeStyle = PAL.voice
+        ctx.lineWidth = 1
+        ctx.setLineDash([4, 3])
+        ctx.strokeRect(bx + 0.5, by + 0.5, bw, bh)
+        ctx.setLineDash([])
+      }
+    }
     if (live.edit && live.tool === 'cut' && hover.current && !dg) {
       ctx.fillStyle = PAL.caution
       ctx.fillRect(hover.current.x - 0.5, TOP - 8, 1, h - TOP - BOTTOM + 8)
@@ -528,6 +545,15 @@ export function StageCanvas() {
         }
         return
       }
+      // 노트 편집(선택 도구)에서 빈 곳을 끌면 상자로 여러 노트 선택 — Shift는 더하기, Alt+끌기는 재생 위치 이동
+      if (edit && live.tool === 'select' && !e.altKey) {
+        if (live.playing) a.pause()
+        const base = e.shiftKey ? new Set(live.selection) : new Set<string>()
+        if (!e.shiftKey && live.selection.size) a.setSelection([])
+        view.current.lock = true
+        drag.current = { type: 'box', x0: p.x, y0: p.y, x1: p.x, y1: p.y, base }
+        return
+      }
       if (edit && live.selection.size) a.setSelection([])
       const wasPlaying = live.playing
       if (wasPlaying) a.pause()
@@ -581,6 +607,24 @@ export function StageCanvas() {
         )
       } else if (d.type === 'add') {
         d.t1 = snap(tAt(p.x))
+      } else if (d.type === 'box') {
+        d.x1 = p.x
+        d.y1 = p.y
+        const gg = geo.current
+        const bx0 = Math.min(d.x0, d.x1)
+        const bx1 = Math.max(d.x0, d.x1)
+        const by0 = Math.min(d.y0, d.y1)
+        const by1 = Math.max(d.y0, d.y1)
+        if (bx1 - bx0 < 3 && by1 - by0 < 3) return
+        const ids = new Set(d.base)
+        for (const n of live.notes) {
+          const nx = gg.headX + (n.start - live.time) * gg.pxs
+          const nw = Math.max(n.dur * gg.pxs, 4)
+          const yc = TOP + (gg.hiV - (n.midi + live.shift)) * gg.rowH
+          const half = gg.noteH / 2
+          if (nx <= bx1 && nx + nw >= bx0 && yc - half <= by1 && yc + half >= by0) ids.add(n.id)
+        }
+        if (ids.size !== live.selection.size || [...ids].some((id) => !live.selection.has(id))) a.setSelection([...ids])
       }
     }
 

@@ -58,9 +58,9 @@ export function LyricsOverlay() {
   if (!lyrics) return null
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex flex-col items-center gap-1 px-[72px]" aria-live="off">
-      <div ref={origEl} className="line-clamp-2 max-w-full rounded-md bg-stage/60 px-2 text-center text-balance text-xs text-foreground/80 transition-opacity duration-150" />
-      <div ref={curEl} className="line-clamp-2 max-w-full rounded-lg bg-stage/75 text-balance px-3 py-1 text-center text-lg font-bold text-foreground backdrop-blur transition-opacity duration-150 sm:text-xl" />
-      <div ref={nextEl} className="line-clamp-2 max-w-full rounded-md bg-stage/60 px-2.5 text-balance py-0.5 text-center text-sm font-medium text-foreground/90 transition-opacity duration-150" />
+      <div ref={origEl} className="line-clamp-2 max-w-full rounded-md bg-stage/60 px-2 text-center text-balance text-sm text-foreground/80 sm:text-base transition-opacity duration-150" />
+      <div ref={curEl} className="line-clamp-2 max-w-full rounded-lg bg-stage/75 text-balance px-4 py-1.5 text-center text-2xl font-bold text-foreground backdrop-blur transition-opacity duration-150 sm:text-3xl" />
+      <div ref={nextEl} className="line-clamp-2 max-w-full rounded-md bg-stage/60 px-2.5 text-balance py-0.5 text-center text-lg font-medium text-foreground/90 sm:text-xl transition-opacity duration-150" />
     </div>
   )
 }
