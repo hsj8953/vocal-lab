@@ -96,9 +96,15 @@ function PracticeButton() {
   if (ph === 'running')
     return (
       <div className="flex items-center gap-2">
-        <span className="flex items-center gap-1.5 text-xs font-semibold text-miss" role="status">
-          <span className="size-2 animate-pulse rounded-full bg-miss" /> 연습 중
-        </span>
+        {s.playing ? (
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-miss" role="status">
+            <span className="size-2 animate-pulse rounded-full bg-miss" /> 연습 중
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-caution" role="status" title="재생을 누르면 3초 센 뒤 멈춘 곳부터 이어서 불러요">
+            <span className="size-2 rounded-full bg-caution" /> 일시정지 · 재생하면 이어서
+          </span>
+        )}
         <Button type="button" size="sm" variant="outline" onClick={a.finishPractice} title="지금까지 부른 걸로 결과 보기">
           <Square className="size-3.5 fill-current" /> 끝내고 결과 보기
         </Button>

@@ -201,6 +201,8 @@ export interface PracticeState {
   count: number
   t0: number
   t1: number
+  /** 멈췄다가 이어 부르기 전 카운트다운 */
+  resume?: boolean
 }
 
 export interface TracePoint {

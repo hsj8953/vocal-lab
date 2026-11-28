@@ -97,10 +97,37 @@ export function createActions(env: ActionEnv) {
       return
     }
     if (sRef.current.measure.step !== 'idle') return
+    const pr = sRef.current.practice
+    // 연습 중에 멈췄다가 다시 재생: 3초 세고 멈춘 자리에서 이어 부르기
+    if (pr.phase === 'running' && !resuming) return resumeCountdown()
+    if (pr.phase === 'countdown') return
+    resuming = false
     await p.play()
     live.playing = true
     set({ playing: true })
     if (sRef.current.practice.phase === 'running') beginTake()
+  }
+  let resuming = false
+  const resumeCountdown = () => {
+    const pr = { ...sRef.current.practice, phase: 'countdown' as const, count: 3, resume: true }
+    sRef.current = { ...sRef.current, practice: pr }
+    set({ practice: pr })
+    clearInterval(countTimer)
+    countTimer = setInterval(() => {
+      const cur = sRef.current.practice
+      if (cur.phase !== 'countdown' || !cur.resume) return clearInterval(countTimer)
+      if (cur.count > 1) {
+        const nx = { ...cur, count: cur.count - 1 }
+        sRef.current = { ...sRef.current, practice: nx }
+        return set({ practice: nx })
+      }
+      clearInterval(countTimer)
+      const run = { ...cur, phase: 'running' as const, count: 0, resume: false }
+      sRef.current = { ...sRef.current, practice: run }
+      set({ practice: run })
+      resuming = true
+      void play()
+    }, 1000)
   }
   const pause = () => {
     endTake()
@@ -265,6 +292,13 @@ export function createActions(env: ActionEnv) {
 
   const cancelPractice = () => {
     clearInterval(countTimer)
+    const pr = sRef.current.practice
+    // 이어 부르기 카운트다운이면 연습은 그대로 두고 멈춘 상태로 돌아간다
+    if (pr.phase === 'countdown' && pr.resume) {
+      const back = { ...pr, phase: 'running' as const, count: 0, resume: false }
+      sRef.current = { ...sRef.current, practice: back }
+      return set({ practice: back })
+    }
     set({ practice: { phase: 'idle', count: 0, t0: 0, t1: 0 } })
   }
 
@@ -272,7 +306,8 @@ export function createActions(env: ActionEnv) {
   const finishPractice = async () => {
     const st = sRef.current
     if (st.practice.phase === 'idle') return
-    if (st.practice.phase === 'countdown') return cancelPractice()
+    if (st.practice.phase === 'countdown' && !st.practice.resume) return cancelPractice()
+    clearInterval(countTimer)
     // 화면 갱신 전에 다시 불려도 한 번만 처리되도록 바로 표시
     sRef.current = { ...st, practice: { phase: 'idle', count: 0, t0: 0, t1: 0 } }
     pause()
@@ -346,9 +381,14 @@ export function createActions(env: ActionEnv) {
   const prepareTake = async (segs: engine.TakeSegment[]) => {
     const sr0 = segs[0].sr
     const t0 = Math.min(...segs.map((g) => g.t0))
-    const t1 = Math.max(...segs.map((g) => g.t0 + g.data.length / g.sr))
-    const merged = new Float32Array(Math.ceil((t1 - t0) * sr0))
-    for (const g of segs) merged.set(g.data.subarray(0, Math.max(0, merged.length - Math.round((g.t0 - t0) * sr0))), Math.max(0, Math.round((g.t0 - t0) * sr0)))
+    // 녹음은 배속으로 부른 그대로라, 곡 시간 차이를 배속으로 나눠야 녹음 속 위치가 된다
+    const r = takeRate || 1
+    const t1 = Math.max(...segs.map((g) => g.t0 + (g.data.length / g.sr) * r))
+    const merged = new Float32Array(Math.ceil(((t1 - t0) / r) * sr0))
+    for (const g of segs) {
+      const at = Math.max(0, Math.round(((g.t0 - t0) / r) * sr0))
+      merged.set(g.data.subarray(0, Math.max(0, merged.length - at)), at)
+    }
     let data: Float32Array = merged
     let sr = sr0
     if (sr0 > 32000) {

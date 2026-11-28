@@ -230,8 +230,17 @@ function PracticeOverlay() {
       <span key={s.practice.count} className="rise-in font-mono text-8xl leading-none font-bold text-voice tabular">
         {s.practice.count}
       </span>
-      <p className="text-sm font-medium">반주가 나오면 따라 불러 주세요</p>
-      <p className="text-xs text-muted-foreground">이어폰을 끼면 더 정확해요 · 곡이 끝나면 결과가 자동으로 나와요</p>
+      {s.practice.resume ? (
+        <>
+          <p className="text-sm font-medium">멈춘 곳부터 이어서 불러요</p>
+          <p className="text-xs text-muted-foreground">녹음은 끊긴 곳부터 이어 붙여져요</p>
+        </>
+      ) : (
+        <>
+          <p className="text-sm font-medium">반주가 나오면 따라 불러 주세요</p>
+          <p className="text-xs text-muted-foreground">이어폰을 끼면 더 정확해요 · 곡이 끝나면 결과가 자동으로 나와요</p>
+        </>
+      )}
       <Button size="sm" variant="ghost" onClick={a.cancelPractice}>
         취소
       </Button>
